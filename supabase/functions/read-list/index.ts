@@ -30,7 +30,9 @@ Rules:
 - Set "unsure" to true only when you genuinely can't tell what a word says; give your best guess as the name.
 - Pick the store aisle "category" from the allowed list.
 - Ignore page headings, dates, store names, doodles and notebook printing.
-If the photo has no list, return an empty items array.`;
+If the photo has no list, return an empty items array.
+
+Respond ONLY by calling the save_list tool.`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -76,7 +78,6 @@ Deno.serve(async (req) => {
           required: ["items"],
         },
       }],
-      tool_choice: { type: "tool", name: "save_list" },
       messages: [{
         role: "user",
         content: [
@@ -97,7 +98,14 @@ Deno.serve(async (req) => {
   }
   const data = await res.json();
   const tool = (data.content ?? []).find((c: { type: string }) => c.type === "tool_use");
-  const items = Array.isArray(tool?.input?.items) ? tool.input.items : [];
+  let items = Array.isArray(tool?.input?.items) ? tool.input.items : null;
+  if (!items) {
+    // Model answered in text instead of calling the tool: pull the JSON out of it.
+    const text = (data.content ?? []).filter((c: { type: string }) => c.type === "text").map((c: { text: string }) => c.text).join("\n");
+    const m = text.match(/\{[\s\S]*"items"[\s\S]*\}/) || text.match(/\[[\s\S]*\]/);
+    try { const parsed = m ? JSON.parse(m[0]) : null; items = Array.isArray(parsed) ? parsed : parsed?.items ?? []; } catch { items = []; }
+    if (!items.length) console.error("No items parsed from model reply", text.slice(0, 300));
+  }
   const clean = items
     .filter((i: { name?: unknown }) => typeof i?.name === "string" && i.name.trim())
     .map((i: { name: string; quantity?: string; category?: string; unsure?: boolean }) => ({
