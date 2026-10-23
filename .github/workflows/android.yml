@@ -68,7 +68,12 @@ jobs:
           ANDROID_KEY_PASSWORD: 'ilRgXqCUBxPyLGzorN_MVne2'
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          set -o pipefail
+          if ! ./gradlew assembleRelease --no-daemon 2>&1 | tee gradle.log; then
+            # surface the real error on the run summary page
+            grep -A 25 "What went wrong" gradle.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
           cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/GroceryList.apk"
 
       - uses: actions/upload-artifact@v4
