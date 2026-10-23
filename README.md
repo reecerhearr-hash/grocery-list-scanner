@@ -13,6 +13,7 @@ Direct link to the newest build: `https://github.com/reecerhearr-hash/grocery-li
 **Updates:** every change pushed to `main` builds a new APK automatically (Actions tab → *Build Android app*). Install the new one over the old one and your list carries over. You can also start a build by hand: **Actions → Build Android app → Run workflow**.
 
 ## What it does
+- **Upload from photos.** Tap **🖼️ Photos** to use pictures already in your gallery. You can pick several at once, for example a list that runs onto two pages; they're read together, and an item that appears in more than one photo only shows up once.
 - **Scan a list.** Take a photo, or pick one from your gallery (⋯ menu). The image is cleaned up before reading: it's straightened for phone rotation, blue notebook lines are faded, and the contrast is boosted. You then get a **review screen** where you can untick junk lines, fix spelling and set quantities before anything is saved. Low-confidence lines are shown in orange. Items already on your list are unticked automatically.
 - **Understands quantities.** For example `2 gal milk`, `eggs x2`, `3 cans black beans`, `apples - 6`, `two avocados`, and `ground beef 2 lbs` (it also corrects the common OCR misread "Ibs"). Bullets, `[ ]` boxes and `1.` numbering are removed.
 - **Sorted by aisle.** Items are grouped automatically (Produce, Meat, Dairy, Bakery, Frozen, Pantry, Snacks & Drinks, Household, Personal Care, Pets, Other). Checked items move to "In cart".

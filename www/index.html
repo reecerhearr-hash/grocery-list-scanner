@@ -86,7 +86,12 @@
     .bottom .wrap { display: flex; align-items: center; gap: 12px; padding: 0; }
     .totals { flex: 1; font-size: 14px; color: var(--muted); }
     .totals b { color: var(--text); }
-    .scan { padding: 14px 20px; border-radius: 26px; font-size: 16px; }
+    .totals { min-width: 0; }
+    .scan { padding: 14px 18px; border-radius: 26px; font-size: 16px; white-space: nowrap; flex: none; }
+    .scan-alt { background: var(--chip); color: var(--accent); }
+    .thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .thumbs img { height: 120px; border-radius: 8px; flex: none; background: var(--card); object-fit: cover; }
+    .thumbs img.active { outline: 3px solid var(--accent); }
 
     /* Sheets */
     .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
@@ -161,20 +166,21 @@
     <div class="bottom">
       <div class="wrap">
         <div class="totals" id="totals"></div>
-        <button class="btn scan" id="scanBtn">📷 Scan list</button>
+        <button class="btn scan scan-alt" id="photosBtn" aria-label="Upload list from photos">🖼️ Photos</button>
+        <button class="btn scan" id="scanBtn">📷 Scan</button>
       </div>
     </div>
   </div>
 
   <input id="cameraInput" type="file" accept="image/*" capture="environment" class="hidden">
-  <input id="galleryInput" type="file" accept="image/*" class="hidden">
+  <input id="galleryInput" type="file" accept="image/*" multiple class="hidden">
 
   <!-- ============ SHEETS ============ -->
   <div id="menuSheet" class="scrim hidden">
     <div class="sheet">
       <div class="sheet-head"><h3>List</h3><button class="btn-ghost" data-close>Done</button></div>
       <div class="card menu">
-        <button id="mGallery">🖼️ Scan from photo library</button>
+        <button id="mGallery">🖼️ Upload list from photos</button>
         <button id="mShare">📤 Share / copy list</button>
         <button id="mUncheck">↩️ Uncheck all</button>
         <button id="mClearChecked">🧹 Remove checked items</button>
@@ -206,6 +212,7 @@
     <div class="sheet">
       <div class="sheet-head"><button class="btn-ghost" id="reviewCancel">Cancel</button><h3>Scanned items</h3><button class="btn-ghost" id="reviewAddTop" disabled>Add</button></div>
       <img id="reviewImg" class="preview" alt="Scanned list">
+      <div id="reviewThumbs" class="thumbs hidden"></div>
       <div id="reviewStatus" class="note">Reading your list…</div>
       <div class="progress"><div id="reviewBar"></div></div>
       <div id="reviewBody" class="hidden">
@@ -245,7 +252,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const BUILT_IN = window.GROCERY_CONFIG || {};
 const TABLE = 'grocery_items';
@@ -518,7 +525,7 @@ function render() {
   const pend = pendingIds();
   if (!items.length) {
     const e = el('div', 'empty');
-    e.append(el('div', 'big', '🛒'), el('p', null, 'Your list is empty.'), el('p', null, 'Tap “Scan list” to photograph a handwritten list, or type items above.'));
+    e.append(el('div', 'big', '🛒'), el('p', null, 'Your list is empty.'), el('p', null, 'Tap 📷 Scan to photograph a handwritten list, 🖼️ Photos to use pictures you already took, or type items above.'));
     listEl.append(e);
   }
   const groups = new Map();
@@ -760,7 +767,7 @@ document.querySelectorAll('.scrim').forEach(s => s.addEventListener('click', e =
 
 /* ---------------- OCR ---------------- */
 let ocrWorker = null, ocrWorkerPromise = null;
-let currentFile = null, reviewRows = [];
+let currentFiles = [], reviewRows = [], scanIndex = 0;
 
 function getWorker() {
   if (ocrWorker) return Promise.resolve(ocrWorker);
@@ -775,7 +782,7 @@ function getWorker() {
       gzip: !IS_NATIVE,
       workerBlobURL: false,
       logger: m => {
-        if (m.status === 'recognizing text') setReview(`Reading text… ${Math.round(m.progress * 100)}%`, 30 + m.progress * 70);
+        if (m.status === 'recognizing text') scanProgress('Reading text…', m.progress);
         else if (/loading|initializ/i.test(m.status || '')) setReview('Loading text reader (first time takes a moment)…', 5 + (m.progress || 0) * 25);
       },
     }).then(async w => {
@@ -831,44 +838,81 @@ async function preprocess(file, enhance) {
 function isJunk(text, conf) {
   const letters = (text.match(/\p{L}/gu) || []).length;
   if (letters < 2) return true;
+  if (!/\p{L}{3,}/u.test(text)) return true; // no real word, e.g. "EE EE" from a paper edge
   if (letters / text.replace(/\s/g, '').length < 0.5) return true; // mostly symbols / digits
   if (/^(grocer(y|ies)|shopping|list|to ?do|todo|walmart|kroger|aldi|meijer|target|costco|store|week of|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s:.-]*(list)?[\s:.-]*$/i.test(text.trim())) return true;
   return conf < 15;
 }
 
-async function runScan(file) {
-  currentFile = file;
-  $('reviewImg').src = URL.createObjectURL(file);
+function photoLabel() { return currentFiles.length > 1 ? `Photo ${scanIndex + 1} of ${currentFiles.length} · ` : ''; }
+function scanProgress(text, frac) {
+  // 0–30% = loading the reader (first scan only), 30–100% split evenly across photos
+  const per = 70 / currentFiles.length;
+  setReview(`${photoLabel()}${text} ${Math.round(frac * 100)}%`, 30 + per * (scanIndex + frac));
+}
+function showReviewImage(i) {
+  $('reviewImg').src = currentFiles[i].url;
+  $('reviewThumbs').querySelectorAll('img').forEach((t, j) => t.classList.toggle('active', j === i));
+}
+
+async function runScan(files) {
+  // files: one camera shot, or several photos picked from the gallery (e.g. a list on 2 pages)
+  if (files !== currentFiles) {
+    currentFiles.forEach(f => URL.revokeObjectURL(f.url));
+    currentFiles = Array.from(files).filter(f => f && (!f.type || f.type.startsWith('image/'))).slice(0, 10)
+      .map(file => ({ file, url: URL.createObjectURL(file) }));
+  }
+  if (!currentFiles.length) return toast('Pick a photo of your list');
+  const thumbs = $('reviewThumbs'); thumbs.replaceChildren();
+  thumbs.classList.toggle('hidden', currentFiles.length < 2);
+  $('reviewImg').classList.toggle('hidden', currentFiles.length > 1);
+  if (currentFiles.length > 1) currentFiles.forEach((f, i) => {
+    const t = el('img'); t.src = f.url; t.alt = `Photo ${i + 1}`; t.onclick = () => { $('reviewImg').classList.remove('hidden'); showReviewImage(i); };
+    thumbs.append(t);
+  });
+  showReviewImage(0);
   $('reviewBody').classList.add('hidden');
   $('reviewAddTop').disabled = true;
   setReview('Preparing image…', 2);
-  openSheet('reviewSheet');
+  if ($('reviewSheet').classList.contains('hidden')) openSheet('reviewSheet');
+
+  const existing = new Set(items.filter(i => !i.checked).map(i => normKey(i.name)));
+  const seen = new Set();
+  const failed = [];
+  reviewRows = [];
   try {
-    const canvas = await preprocess(file, $('reviewEnhance').checked);
     const worker = await getWorker();
-    setReview('Reading text… 0%', 30);
-    const { data } = await worker.recognize(canvas);
-    const lines = (data.lines && data.lines.length ? data.lines.map(l => ({ text: l.text, conf: l.confidence }))
-      : (data.text || '').split('\n').map(t => ({ text: t, conf: 60 })));
-    const existing = new Set(items.filter(i => !i.checked).map(i => normKey(i.name)));
-    const seen = new Set();
-    reviewRows = [];
-    for (const l of lines) {
-      // a single written line sometimes holds "milk, eggs, bread"
-      for (const part of l.text.split(/[,;]/)) {
-        const raw = part.trim();
-        if (!raw) continue;
-        const p = parseItem(raw);
-        if (!p.name || isJunk(p.name, l.conf)) continue;
-        const key = normKey(p.name);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const dup = existing.has(key);
-        reviewRows.push({ ...p, include: !dup && l.conf >= 30, low: l.conf < 55, note: dup ? 'already on list' : '' });
+    for (scanIndex = 0; scanIndex < currentFiles.length; scanIndex++) {
+      showReviewImage(scanIndex);
+      scanProgress('Preparing image…', 0);
+      let data;
+      try {
+        const canvas = await preprocess(currentFiles[scanIndex].file, $('reviewEnhance').checked);
+        ({ data } = await worker.recognize(canvas));
+      } catch (e) { console.error(e); failed.push(scanIndex + 1); continue; }
+      const lines = (data.lines && data.lines.length ? data.lines.map(l => ({ text: l.text, conf: l.confidence }))
+        : (data.text || '').split('\n').map(t => ({ text: t, conf: 60 })));
+      for (const l of lines) {
+        // a single written line sometimes holds "milk, eggs, bread"
+        for (const part of l.text.split(/[,;]/)) {
+          const raw = part.trim();
+          if (!raw) continue;
+          const p = parseItem(raw);
+          if (!p.name || isJunk(p.name, l.conf)) continue;
+          const key = normKey(p.name);
+          if (seen.has(key)) continue; // same item on two photos only shows once
+          seen.add(key);
+          const dup = existing.has(key);
+          reviewRows.push({ ...p, include: !dup && l.conf >= 30, low: l.conf < 55, note: dup ? 'already on list' : '' });
+        }
       }
     }
+    scanIndex = 0; showReviewImage(0);
     renderReview();
-    setReview(reviewRows.length ? `Found ${reviewRows.length} line${reviewRows.length > 1 ? 's' : ''}.` : 'No items found. Try better lighting, fill the frame with the list, or turn off “Enhance” and rescan.', 100);
+    const from = currentFiles.length > 1 ? ` from ${currentFiles.length - failed.length} photos` : '';
+    let msg = reviewRows.length ? `Found ${reviewRows.length} line${reviewRows.length > 1 ? 's' : ''}${from}.` : 'No items found. Try better lighting, fill the frame with the list, or turn off “Enhance” and rescan.';
+    if (failed.length) msg += ` Couldn't read photo ${failed.join(', ')} (unsupported image?).`;
+    setReview(msg, 100);
     $('reviewBody').classList.remove('hidden');
   } catch (e) {
     console.error(e);
@@ -906,12 +950,13 @@ function commitReview() {
 $('reviewAdd').onclick = commitReview;
 $('reviewAddTop').onclick = commitReview;
 $('reviewCancel').onclick = () => closeSheet('reviewSheet');
-$('reviewRescan').onclick = () => currentFile && runScan(currentFile);
+$('reviewRescan').onclick = () => currentFiles.length && runScan(currentFiles);
 $('reviewAddLine').onclick = () => { reviewRows.push({ name: '', quantity: '', include: true, low: false, note: '' }); renderReview(); const ins = $('reviewList').querySelectorAll('.n'); ins[ins.length - 1].focus(); };
 
 $('scanBtn').onclick = () => $('cameraInput').click();
+$('photosBtn').onclick = () => $('galleryInput').click();
 for (const id of ['cameraInput', 'galleryInput']) {
-  $(id).onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) runScan(f); };
+  $(id).onchange = e => { const files = Array.from(e.target.files || []); e.target.value = ''; if (files.length) runScan(files); };
 }
 
 /* ---------------- Boot ---------------- */
