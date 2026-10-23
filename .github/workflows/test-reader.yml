@@ -1,0 +1,23 @@
+name: Test AI list reader
+
+# Sends tests/sample-list.jpg to the Supabase "read-list" function and shows what it read.
+# Run it from Actions → Test AI list reader → Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Call read-list
+        run: |
+          URL=$(grep -o "https://[a-z0-9]*\.supabase\.co" www/config.js)
+          KEY=$(grep -o "eyJ[A-Za-z0-9._-]*" www/config.js)
+          printf '{"image":"%s","mediaType":"image/jpeg"}' "$(base64 -w0 tests/sample-list.jpg)" > body.json
+          code=$(curl -sS -o out.json -w '%{http_code}' -X POST "$URL/functions/v1/read-list" \
+            -H "Authorization: Bearer $KEY" -H "apikey: $KEY" -H "content-type: application/json" --data @body.json)
+          echo "HTTP $code"; cat out.json; echo
+          if [ "$code" != "200" ]; then echo "::error::read-list returned $code: $(head -c 300 out.json)"; exit 1; fi
+          n=$(jq '.items | length' out.json)
+          echo "::notice::Read $n items: $(jq -r '[.items[] | .name + (if .quantity != "" then " ["+.quantity+"]" else "" end) + (if .unsure then " (?)" else "" end)] | join(" | ")' out.json)"

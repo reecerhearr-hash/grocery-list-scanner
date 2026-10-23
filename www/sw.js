@@ -2,7 +2,7 @@
 // - App shell: network-first (so updates show up), falls back to cache offline
 // - Large OCR files (vendor/core, vendor/lang) are cached as they're first used
 // - Supabase API: never cached (the app keeps its own offline copy + change queue)
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.3.0';
 const SHELL = `grocery-shell-${VERSION}`;
 const SHELL_FILES = ['./', './index.html', './config.js', './manifest.json', './icon-192.png', './icon-512.png',
   './icon-maskable-192.png', './icon-maskable-512.png', './vendor/supabase.js', './vendor/tesseract.min.js', './vendor/worker.min.js'];

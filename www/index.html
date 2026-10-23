@@ -219,7 +219,8 @@
         <p class="note">Uncheck anything that isn't an item and fix spelling before adding. <span style="color:var(--warn)">Orange</span> = low confidence.</p>
         <div class="card" id="reviewList"></div>
         <button class="btn-ghost" id="reviewAddLine">＋ Add a line</button>
-        <label class="toggle"><input type="checkbox" id="reviewEnhance" checked> Enhance image (contrast boost) — turn off and rescan if results look worse</label>
+        <label class="toggle"><input type="checkbox" id="reviewAI"> Use AI handwriting reader (needs internet)</label>
+        <label class="toggle"><input type="checkbox" id="reviewEnhance" checked> Enhance image for the on-phone reader</label>
         <button class="btn-ghost" id="reviewRescan">↻ Rescan</button>
         <button class="btn btn-block" id="reviewAdd" style="margin-top:8px">Add items</button>
       </div>
@@ -252,7 +253,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const BUILT_IN = window.GROCERY_CONFIG || {};
 const TABLE = 'grocery_items';
@@ -844,6 +845,57 @@ function isJunk(text, conf) {
   return conf < 15;
 }
 
+/* AI handwriting reader (Supabase function "read-list" → Claude). Falls back to on-phone OCR when offline. */
+const AI_KEY = 'gl_ai_reader';
+function aiEnabled() { try { return localStorage.getItem(AI_KEY) !== 'off'; } catch { return true; } }
+let aiNotice = '';
+
+async function toJpegBase64(file) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { bmp = await new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = URL.createObjectURL(file); }); }
+  const long = Math.max(bmp.width, bmp.height), scale = Math.min(1, 1568 / long); // 1568px is the sweet spot for vision models
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  if (bmp.close) bmp.close();
+  return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+
+async function readWithAI(file) {
+  const image = await toJpegBase64(file);
+  const { data, error } = await db.functions.invoke('read-list', { body: { image, mediaType: 'image/jpeg' } });
+  if (error) {
+    let code = 'ai_error', msg = error.message;
+    try { const b = await error.context.json(); code = b.error || code; msg = b.message || msg; } catch {}
+    const e = new Error(msg); e.code = code; throw e;
+  }
+  return (data && data.items) || [];
+}
+
+async function readWithTesseract(file, worker) {
+  const canvas = await preprocess(file, $('reviewEnhance').checked);
+  const { data } = await worker.recognize(canvas);
+  const lines = (data.lines && data.lines.length ? data.lines.map(l => ({ text: l.text, conf: l.confidence }))
+    : (data.text || '').split('\n').map(t => ({ text: t, conf: 60 })));
+  const out = [];
+  for (const l of lines) for (const part of l.text.split(/[,;]/)) {
+    const raw = part.trim(); if (!raw) continue;
+    const p = parseItem(raw);
+    if (!p.name || isJunk(p.name, l.conf)) continue;
+    out.push({ ...p, conf: l.conf });
+  }
+  return out;
+}
+
+function aiErrorText(e) {
+  switch (e.code) {
+    case 'no_api_key': return 'AI reader isn\'t set up yet (no Anthropic key in Supabase).';
+    case 'bad_api_key': return 'AI reader: the Anthropic key was rejected.';
+    case 'no_credit': return 'AI reader: the Anthropic account is out of credit.';
+    default: return 'AI reader unavailable (' + (e.message || 'error').slice(0, 80) + ').';
+  }
+}
+
 function photoLabel() { return currentFiles.length > 1 ? `Photo ${scanIndex + 1} of ${currentFiles.length} · ` : ''; }
 function scanProgress(text, frac) {
   // 0–30% = loading the reader (first scan only), 30–100% split evenly across photos
@@ -879,38 +931,48 @@ async function runScan(files) {
   const existing = new Set(items.filter(i => !i.checked).map(i => normKey(i.name)));
   const seen = new Set();
   const failed = [];
+  let usedAI = 0, usedLocal = 0;
+  aiNotice = '';
   reviewRows = [];
+  const pushRow = (p, include, low) => {
+    const key = normKey(p.name);
+    if (!key || seen.has(key)) return; // same item twice / on two photos only shows once
+    seen.add(key);
+    const dup = existing.has(key);
+    reviewRows.push({ name: p.name, quantity: p.quantity || '', category: p.category || null, include: include && !dup, low, note: dup ? 'already on list' : '' });
+  };
   try {
-    const worker = await getWorker();
+    let worker = null;
     for (scanIndex = 0; scanIndex < currentFiles.length; scanIndex++) {
       showReviewImage(scanIndex);
-      scanProgress('Preparing image…', 0);
-      let data;
-      try {
-        const canvas = await preprocess(currentFiles[scanIndex].file, $('reviewEnhance').checked);
-        ({ data } = await worker.recognize(canvas));
-      } catch (e) { console.error(e); failed.push(scanIndex + 1); continue; }
-      const lines = (data.lines && data.lines.length ? data.lines.map(l => ({ text: l.text, conf: l.confidence }))
-        : (data.text || '').split('\n').map(t => ({ text: t, conf: 60 })));
-      for (const l of lines) {
-        // a single written line sometimes holds "milk, eggs, bread"
-        for (const part of l.text.split(/[,;]/)) {
-          const raw = part.trim();
-          if (!raw) continue;
-          const p = parseItem(raw);
-          if (!p.name || isJunk(p.name, l.conf)) continue;
-          const key = normKey(p.name);
-          if (seen.has(key)) continue; // same item on two photos only shows once
-          seen.add(key);
-          const dup = existing.has(key);
-          reviewRows.push({ ...p, include: !dup && l.conf >= 30, low: l.conf < 55, note: dup ? 'already on list' : '' });
-        }
+      const file = currentFiles[scanIndex].file;
+      let done = false;
+      if (aiEnabled() && db && navigator.onLine) {
+        scanProgress('Reading handwriting (AI)…', 0.15);
+        const tick = setInterval(() => scanProgress('Reading handwriting (AI)…', 0.5), 1500);
+        try {
+          const found = await readWithAI(file);
+          found.forEach(i => { const q = parseItem(i.name); pushRow({ name: capitalize(i.name.trim()), quantity: i.quantity || q.quantity, category: i.category }, true, !!i.unsure); });
+          usedAI++; done = true;
+        } catch (e) { console.warn('AI reader failed', e); aiNotice = aiErrorText(e); }
+        finally { clearInterval(tick); }
+      }
+      if (!done) {
+        try {
+          if (!worker) worker = await getWorker();
+          scanProgress('Preparing image…', 0);
+          const found = await readWithTesseract(file, worker);
+          found.forEach(p => pushRow(p, p.conf >= 30, p.conf < 55));
+          usedLocal++;
+        } catch (e) { console.error(e); failed.push(scanIndex + 1); }
       }
     }
     scanIndex = 0; showReviewImage(0);
     renderReview();
     const from = currentFiles.length > 1 ? ` from ${currentFiles.length - failed.length} photos` : '';
-    let msg = reviewRows.length ? `Found ${reviewRows.length} line${reviewRows.length > 1 ? 's' : ''}${from}.` : 'No items found. Try better lighting, fill the frame with the list, or turn off “Enhance” and rescan.';
+    const how = usedAI && !usedLocal ? ' Read by AI.' : usedLocal && !usedAI ? ' Read on this phone (basic reader — messy handwriting may come out wrong).' : usedAI ? ' Some photos read on this phone.' : '';
+    let msg = reviewRows.length ? `Found ${reviewRows.length} item${reviewRows.length > 1 ? 's' : ''}${from}.${how}` : 'No items found. Try better lighting and fill the frame with the list.';
+    if (aiNotice && usedLocal) msg += ' ' + aiNotice;
     if (failed.length) msg += ` Couldn't read photo ${failed.join(', ')} (unsupported image?).`;
     setReview(msg, 100);
     $('reviewBody').classList.remove('hidden');
@@ -942,7 +1004,7 @@ function updateReviewCount() {
   $('reviewAdd').disabled = !n; $('reviewAddTop').disabled = !n;
 }
 function commitReview() {
-  const chosen = reviewRows.filter(r => r.include && r.name.trim()).map(r => ({ name: capitalize(r.name.trim()), quantity: r.quantity.trim() }));
+  const chosen = reviewRows.filter(r => r.include && r.name.trim()).map(r => ({ name: capitalize(r.name.trim()), quantity: (r.quantity || '').trim(), category: r.category || undefined }));
   const n = addItems(chosen);
   closeSheet('reviewSheet');
   if (n) toast(`Added ${n} item${n > 1 ? 's' : ''}`);
@@ -951,6 +1013,8 @@ $('reviewAdd').onclick = commitReview;
 $('reviewAddTop').onclick = commitReview;
 $('reviewCancel').onclick = () => closeSheet('reviewSheet');
 $('reviewRescan').onclick = () => currentFiles.length && runScan(currentFiles);
+$('reviewAI').checked = aiEnabled();
+$('reviewAI').onchange = e => { try { localStorage.setItem(AI_KEY, e.target.checked ? 'on' : 'off'); } catch {} };
 $('reviewAddLine').onclick = () => { reviewRows.push({ name: '', quantity: '', include: true, low: false, note: '' }); renderReview(); const ins = $('reviewList').querySelectorAll('.n'); ins[ins.length - 1].focus(); };
 
 $('scanBtn').onclick = () => $('cameraInput').click();
