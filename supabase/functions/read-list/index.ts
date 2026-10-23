@@ -36,7 +36,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "POST an image" }, 405);
 
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  // tolerate stray spaces / quotes from copy-paste
+  const key = (Deno.env.get("ANTHROPIC_API_KEY") ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
   if (!key) return json({ error: "no_api_key", message: "ANTHROPIC_API_KEY secret is not set in Supabase" }, 503);
 
   let body: { image?: string; mediaType?: string };
@@ -90,7 +91,9 @@ Deno.serve(async (req) => {
     const detail = await res.text();
     console.error("Anthropic error", res.status, detail.slice(0, 500));
     const code = res.status === 401 ? "bad_api_key" : res.status === 400 && /credit/i.test(detail) ? "no_credit" : "ai_error";
-    return json({ error: code, status: res.status, message: detail.slice(0, 300) }, 502);
+    // Safe diagnostics only: never return the key itself.
+    const keyCheck = { startsWithSkAnt: key.startsWith("sk-ant-"), length: key.length, hasSpaces: /\s/.test(key) };
+    return json({ error: code, status: res.status, message: detail.slice(0, 300), keyCheck }, 502);
   }
   const data = await res.json();
   const tool = (data.content ?? []).find((c: { type: string }) => c.type === "tool_use");
