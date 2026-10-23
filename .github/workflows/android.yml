@@ -1,0 +1,72 @@
+name: Build Android app
+
+# Builds the APK and publishes it on the Releases page every time main changes.
+# Download link that always points at the newest build:
+#   https://github.com/${{ github.repository }}/releases/latest/download/GroceryList.apk
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 2.1.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Bundle web app into Android project
+        run: npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          # Signing key lives in android/release.keystore (private repo). Same key every build, so updates install over the old app..
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: 'ilRgXqCUBxPyLGzorN_MVne2'
+          ANDROID_KEY_ALIAS: grocerylist
+          ANDROID_KEY_PASSWORD: 'ilRgXqCUBxPyLGzorN_MVne2'
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/GroceryList.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GroceryList-${{ env.VERSION_NAME }}
+          path: GroceryList.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION_NAME" GroceryList.apk \
+            --title "Grocery List $VERSION_NAME" \
+            --latest \
+            --notes "**Install:** on your Android phone, tap **GroceryList.apk** below → Open → allow installs from this source if asked → Install. Installing a newer version keeps your list."

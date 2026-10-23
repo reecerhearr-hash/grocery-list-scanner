@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Grocery List</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#007aff">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="vendor/supabase.js"></script>
+  <script src="vendor/tesseract.min.js"></script>
+  <script src="config.js"></script>
+  <style>
+    :root {
+      --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #e5e5ea;
+      --accent: #007aff; --accent-text: #ffffff; --danger: #ff3b30; --ok: #34c759; --warn: #ff9500;
+      --chip: #eef4ff; --shadow: 0 1px 2px rgba(0,0,0,.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --line: #2c2c2e;
+        --accent: #0a84ff; --chip: #1a2a44; --shadow: none;
+      }
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body {
+      font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: var(--safe-area-inset-top, env(safe-area-inset-top)) 0 calc(96px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 0 16px; }
+    .hidden { display: none !important; }
+    button { font: inherit; cursor: pointer; border: 0; border-radius: 12px; }
+    input, select { font: inherit; color: var(--text); }
+    .btn { background: var(--accent); color: var(--accent-text); padding: 12px 16px; font-weight: 600; }
+    .btn:disabled { opacity: .5; }
+    .btn-ghost { background: transparent; color: var(--accent); padding: 10px 12px; font-weight: 600; }
+    .btn-danger { background: var(--danger); color: #fff; padding: 12px 16px; font-weight: 600; }
+    .btn-block { width: 100%; }
+    .field {
+      width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
+      background: var(--card); margin-bottom: 10px;
+    }
+    label.lbl { display: block; font-size: 13px; color: var(--muted); margin: 4px 0 4px 2px; }
+
+    /* Header */
+    header { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 12px 0 8px; }
+    .top { display: flex; align-items: center; gap: 8px; }
+    .top h1 { font-size: 28px; margin: 0; flex: 1; letter-spacing: -.02em; }
+    .icon-btn { background: var(--card); color: var(--text); width: 40px; height: 40px; border-radius: 20px; font-size: 20px; box-shadow: var(--shadow); }
+    .sync { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+    .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--ok); }
+    .dot.off { background: var(--warn); }
+    .dot.err { background: var(--danger); }
+    .addbar { display: flex; gap: 8px; margin-top: 10px; }
+    .addbar input { flex: 1; margin: 0; }
+    .addbar .btn { padding: 0 18px; }
+
+    .banner { background: #fff4e5; color: #8a4b00; border-radius: 10px; padding: 10px 12px; margin: 8px 0; font-size: 14px; }
+    @media (prefers-color-scheme: dark) { .banner { background: #3a2a10; color: #ffcf8a; } }
+
+    /* List */
+    .group h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 6px; font-weight: 600; }
+    .card { background: var(--card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+    .row { display: flex; align-items: center; min-height: 52px; border-bottom: 1px solid var(--line); }
+    .row:last-child { border-bottom: 0; }
+    .check { width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; background: none; flex: none; }
+    .box { width: 24px; height: 24px; border-radius: 12px; border: 2px solid var(--muted); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; }
+    .row.done .box { background: var(--ok); border-color: var(--ok); }
+    .row-main { flex: 1; min-width: 0; padding: 8px 12px 8px 0; background: none; text-align: left; color: var(--text); display: flex; align-items: center; gap: 8px; border-radius: 0; }
+    .row-name { flex: 1; overflow-wrap: anywhere; }
+    .row.done .row-name { text-decoration: line-through; color: var(--muted); }
+    .qty { background: var(--chip); color: var(--accent); font-size: 13px; padding: 2px 8px; border-radius: 10px; flex: none; }
+    .price { color: var(--muted); font-size: 14px; flex: none; font-variant-numeric: tabular-nums; }
+    .pending { width: 6px; height: 6px; border-radius: 3px; background: var(--warn); flex: none; }
+    .empty { text-align: center; color: var(--muted); padding: 48px 16px; }
+    .empty .big { font-size: 48px; }
+
+    /* Bottom bar */
+    .bottom {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--bg);
+      border-top: 1px solid var(--line); padding: 10px 16px calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+    }
+    .bottom .wrap { display: flex; align-items: center; gap: 12px; padding: 0; }
+    .totals { flex: 1; font-size: 14px; color: var(--muted); }
+    .totals b { color: var(--text); }
+    .scan { padding: 14px 20px; border-radius: 26px; font-size: 16px; }
+
+    /* Sheets */
+    .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+    .sheet {
+      background: var(--bg); width: 100%; max-width: 640px; max-height: 92vh; overflow-y: auto;
+      border-radius: 16px 16px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+    }
+    .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -8px; background: var(--bg); padding: 8px 0; z-index: 1; }
+    .sheet-head h3 { margin: 0; font-size: 17px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid2 .field { margin-bottom: 0; }
+    .menu button { display: block; width: 100%; text-align: left; background: var(--card); color: var(--text); padding: 14px 16px; border-radius: 0; border-bottom: 1px solid var(--line); }
+    .menu button:last-child { border-bottom: 0; }
+    .menu button.danger { color: var(--danger); }
+
+    /* Review */
+    .preview { width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; background: var(--card); }
+    .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 10px 0; }
+    .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+    .rv { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--card); }
+    .rv:last-child { border-bottom: 0; }
+    .rv input[type=checkbox] { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+    .rv .n { flex: 1; min-width: 0; border: 0; background: transparent; padding: 8px 4px; }
+    .rv .q { width: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: transparent; text-align: center; }
+    .rv.low .n { color: var(--warn); }
+    .rv.off .n { color: var(--muted); text-decoration: line-through; }
+    .note { font-size: 13px; color: var(--muted); margin: 6px 2px; }
+    .toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 8px 2px; }
+    pre.sql { background: var(--card); padding: 10px; border-radius: 10px; font-size: 11px; overflow-x: auto; max-height: 180px; }
+    .toast { position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #333; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; z-index: 30; max-width: 90vw; text-align: center; }
+  </style>
+</head>
+<body>
+
+  <!-- ============ SETUP ============ -->
+  <div id="setup" class="wrap hidden" style="padding-top:24px">
+    <h1 style="font-size:28px;margin:0 0 6px">Grocery List</h1>
+    <p style="color:var(--muted);margin-top:0">Connect your Supabase project. Find these under <b>Project Settings → API</b>.</p>
+    <label class="lbl" for="setupUrl">Project URL</label>
+    <input id="setupUrl" class="field" placeholder="https://xxxx.supabase.co" type="url" autocomplete="off">
+    <label class="lbl" for="setupKey">anon / public key</label>
+    <input id="setupKey" class="field" placeholder="eyJhbGciOi…" type="password" autocomplete="off">
+    <button class="btn btn-block" id="setupSave">Connect</button>
+    <p id="setupMsg" class="note"></p>
+    <details style="margin-top:12px">
+      <summary style="color:var(--accent);font-weight:600">First time? Database setup SQL</summary>
+      <p class="note">Run this once in the Supabase SQL Editor. It's safe to run again — it only adds what's missing.</p>
+      <button class="btn-ghost" data-copy-sql>Copy SQL</button>
+      <pre class="sql" data-sql></pre>
+    </details>
+  </div>
+
+  <!-- ============ MAIN ============ -->
+  <div id="main" class="hidden">
+    <header>
+      <div class="wrap">
+        <div class="top">
+          <div style="flex:1">
+            <h1>Grocery List</h1>
+            <div class="sync"><span class="dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
+          </div>
+          <button class="icon-btn" id="menuBtn" aria-label="Menu">⋯</button>
+        </div>
+        <form class="addbar" id="addForm" autocomplete="off">
+          <input id="addInput" class="field" placeholder="Add item — e.g. 2 milk, eggs, bread" enterkeyhint="done">
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+    </header>
+    <main class="wrap" id="list"></main>
+    <div class="bottom">
+      <div class="wrap">
+        <div class="totals" id="totals"></div>
+        <button class="btn scan" id="scanBtn">📷 Scan list</button>
+      </div>
+    </div>
+  </div>
+
+  <input id="cameraInput" type="file" accept="image/*" capture="environment" class="hidden">
+  <input id="galleryInput" type="file" accept="image/*" class="hidden">
+
+  <!-- ============ SHEETS ============ -->
+  <div id="menuSheet" class="scrim hidden">
+    <div class="sheet">
+      <div class="sheet-head"><h3>List</h3><button class="btn-ghost" data-close>Done</button></div>
+      <div class="card menu">
+        <button id="mGallery">🖼️ Scan from photo library</button>
+        <button id="mShare">📤 Share / copy list</button>
+        <button id="mUncheck">↩️ Uncheck all</button>
+        <button id="mClearChecked">🧹 Remove checked items</button>
+        <button id="mClearAll" class="danger">🗑️ Clear entire list</button>
+      </div>
+      <div class="card menu" style="margin-top:12px">
+        <button id="mSettings">⚙️ Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editSheet" class="scrim hidden">
+    <div class="sheet">
+      <div class="sheet-head"><button class="btn-ghost" data-close>Cancel</button><h3>Edit item</h3><button class="btn-ghost" id="editSave">Save</button></div>
+      <label class="lbl" for="editName">Item</label>
+      <input id="editName" class="field">
+      <div class="grid2">
+        <div><label class="lbl" for="editQty">Quantity</label><input id="editQty" class="field" placeholder="e.g. 2, 1 lb"></div>
+        <div><label class="lbl" for="editPrice">Price per unit ($)</label><input id="editPrice" class="field" inputmode="decimal" placeholder="0.00"></div>
+      </div>
+      <label class="lbl" for="editCat" style="margin-top:10px">Aisle / category</label>
+      <select id="editCat" class="field"></select>
+      <p class="note" id="editPriceHint"></p>
+      <button class="btn-danger btn-block" id="editDelete" style="margin-top:8px">Delete item</button>
+    </div>
+  </div>
+
+  <div id="reviewSheet" class="scrim hidden">
+    <div class="sheet">
+      <div class="sheet-head"><button class="btn-ghost" id="reviewCancel">Cancel</button><h3>Scanned items</h3><button class="btn-ghost" id="reviewAddTop" disabled>Add</button></div>
+      <img id="reviewImg" class="preview" alt="Scanned list">
+      <div id="reviewStatus" class="note">Reading your list…</div>
+      <div class="progress"><div id="reviewBar"></div></div>
+      <div id="reviewBody" class="hidden">
+        <p class="note">Uncheck anything that isn't an item and fix spelling before adding. <span style="color:var(--warn)">Orange</span> = low confidence.</p>
+        <div class="card" id="reviewList"></div>
+        <button class="btn-ghost" id="reviewAddLine">＋ Add a line</button>
+        <label class="toggle"><input type="checkbox" id="reviewEnhance" checked> Enhance image (contrast boost) — turn off and rescan if results look worse</label>
+        <button class="btn-ghost" id="reviewRescan">↻ Rescan</button>
+        <button class="btn btn-block" id="reviewAdd" style="margin-top:8px">Add items</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsSheet" class="scrim hidden">
+    <div class="sheet">
+      <div class="sheet-head"><button class="btn-ghost" data-close>Close</button><h3>Settings</h3><span style="width:60px"></span></div>
+      <label class="lbl" for="setUrl">Supabase project URL</label>
+      <input id="setUrl" class="field" type="url" autocomplete="off">
+      <label class="lbl" for="setKey">anon / public key</label>
+      <input id="setKey" class="field" type="password" autocomplete="off">
+      <button class="btn btn-block" id="setSave">Save & reconnect</button>
+      <p class="note" id="setMsg"></p>
+      <h4 style="margin:18px 2px 6px">Database setup</h4>
+      <p class="note">Run in Supabase → SQL Editor. Safe to re-run; it adds new columns to an existing table and turns on realtime sync.</p>
+      <button class="btn-ghost" data-copy-sql>Copy SQL</button>
+      <pre class="sql" data-sql></pre>
+      <h4 style="margin:18px 2px 6px">This device</h4>
+      <div class="card menu">
+        <button id="setResetCache">Clear offline cache &amp; reload from server</button>
+        <button id="setDisconnect" class="danger">Disconnect (forget Supabase keys)</button>
+      </div>
+      <p class="note" id="setVersion"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+<script>
+'use strict';
+const APP_VERSION = '2.1.0';
+const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const BUILT_IN = window.GROCERY_CONFIG || {};
+const TABLE = 'grocery_items';
+const PRICE_TABLE = 'grocery_prices';
+const LS = { url: 'supabaseUrl', key: 'supabaseKey', items: 'gl_items_cache', queue: 'gl_queue', prices: 'gl_prices_cache' };
+
+const SETUP_SQL = `-- Grocery List Scanner — database setup (safe to re-run)
+create table if not exists public.grocery_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  checked boolean not null default false,
+  created_at timestamptz not null default now()
+);
+alter table public.grocery_items add column if not exists quantity text;
+alter table public.grocery_items add column if not exists category text;
+alter table public.grocery_items add column if not exists price numeric(10,2);
+
+create table if not exists public.grocery_prices (
+  name text primary key,          -- lower-cased item name
+  price numeric(10,2) not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.grocery_items enable row level security;
+alter table public.grocery_prices enable row level security;
+drop policy if exists "Allow all for anon" on public.grocery_items;
+create policy "Allow all for anon" on public.grocery_items for all using (true) with check (true);
+drop policy if exists "Allow all for anon" on public.grocery_prices;
+create policy "Allow all for anon" on public.grocery_prices for all using (true) with check (true);
+
+-- Realtime: lets checkmarks sync live between phones
+do $$ begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'grocery_items') then
+    alter publication supabase_realtime add table public.grocery_items;
+  end if;
+end $$;`;
+
+/* ---------------- Categories ---------------- */
+// Comma-separated keywords; multi-word phrases allowed. The longest matching keyword wins,
+// so "dog food" beats "food", "hot dog" beats "dog", "green beans" beats "beans".
+const CATEGORIES = [
+  ['Produce', 'apple,banana,orange,lemon,lime,grape,berries,strawberry,strawberries,blueberries,raspberries,peach,pear,plum,cherries,melon,watermelon,cantaloupe,pineapple,mango,avocado,tomato,tomatoes,potato,potatoes,sweet potato,onion,garlic,carrot,celery,lettuce,spinach,kale,cabbage,broccoli,cauliflower,cucumber,bell pepper,jalapeno,zucchini,squash,corn on the cob,mushroom,cilantro,parsley,basil,ginger,salad,greens,fruit,veggies,vegetables,green beans,green onion,yam'],
+  ['Meat & Seafood', 'chicken,beef,ground beef,steak,pork,pork chops,bacon,sausage,ham,turkey,ground turkey,hamburger,hot dog,hot dogs,hotdogs,brats,ribs,roast,fish,salmon,tuna steak,shrimp,tilapia,cod,lunch meat,lunchmeat,deli meat,pepperoni,jerky,meatballs'],
+  ['Dairy & Eggs', 'milk,egg,eggs,cheese,shredded cheese,butter,yogurt,yoghurt,cream,heavy cream,sour cream,cottage cheese,cream cheese,creamer,coffee creamer,half and half,margarine,string cheese,whipped cream'],
+  ['Bakery & Bread', 'bread,bun,buns,hamburger buns,hot dog buns,rolls,bagel,bagels,tortilla,tortillas,muffin,muffins,croissant,cake,donut,donuts,pita,english muffins'],
+  ['Frozen', 'frozen,ice cream,frozen pizza,pizza,waffles,fries,french fries,tater tots,popsicles,ice,frozen vegetables,frozen veggies'],
+  ['Pantry', 'rice,pasta,spaghetti,noodles,mac and cheese,flour,sugar,brown sugar,salt,black pepper,oil,olive oil,vegetable oil,vinegar,sauce,pasta sauce,ketchup,mustard,mayo,mayonnaise,peanut butter,jelly,jam,honey,syrup,cereal,cheerios,frosted flakes,oats,oatmeal,soup,beans,black beans,pinto beans,canned,broth,stock,spices,seasoning,baking soda,baking powder,vanilla,cake mix,taco seasoning,taco shells,ranch,dressing,salsa,tuna,corn,bread crumbs'],
+  ['Snacks & Drinks', 'chips,crackers,cookies,candy,chocolate,popcorn,pretzels,nuts,snacks,granola,granola bars,soda,pop,juice,orange juice,apple juice,water,bottled water,coffee,ground coffee,k cups,tea,gatorade,beer,wine,drinks,lemonade,kool aid'],
+  ['Household', 'paper towels,toilet paper,tissues,kleenex,napkins,paper plates,trash bags,garbage bags,foil,aluminum foil,plastic wrap,ziploc,ziploc bags,detergent,laundry detergent,dish soap,dishwasher pods,bleach,cleaner,sponges,batteries,light bulbs,dryer sheets,fabric softener,lysol,clorox wipes'],
+  ['Personal Care', 'shampoo,conditioner,toothpaste,toothbrush,deodorant,lotion,razor,razors,floss,vitamins,medicine,tylenol,advil,ibuprofen,band aids,bandaids,tampons,pads,diapers,baby wipes,wipes,body wash,hand soap,soap'],
+  ['Pets', 'dog food,cat food,dog treats,cat treats,cat litter,litter,kibble,pet food'],
+];
+const OTHER = 'Other';
+const CAT_ORDER = [...CATEGORIES.map(c => c[0]), OTHER];
+const CAT_INDEX = CATEGORIES.map(([cat, words]) => [cat, words.split(',').map(w => w.trim())]);
+
+function guessCategory(name) {
+  const n = ' ' + name.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  let best = null, bestLen = 0;
+  for (const [cat, words] of CAT_INDEX) {
+    for (const w of words) {
+      if (w.length <= bestLen) continue;
+      // whole-word match, allowing a plural "s"/"es" on the last word
+      if (n.includes(' ' + w + ' ') || n.includes(' ' + w + 's ') || n.includes(' ' + w + 'es ')) { best = cat; bestLen = w.length; }
+    }
+  }
+  return best || OTHER;
+}
+
+/* ---------------- Parsing ---------------- */
+const UNIT = '(?:lbs?|pounds?|oz|ounces?|gal(?:lons?)?|qt|quarts?|pk|packs?|pkgs?|packages?|bags?|boxes|box|cans?|jars?|bottles?|dozen|doz|ct|bunch(?:es)?|heads?|loaf|loaves|cartons?|rolls?|cases?)';
+const NUMWORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, dozen: 12, a: 1 };
+
+function parseItem(raw) {
+  let s = String(raw || '')
+    .replace(/[•●▪∙·•]/g, ' ')
+    .replace(/^\s*(?:\[\s?[xX✓]?\s?\]|[-–—*>~+=]|\(?\d{1,2}[.)](?=\s))\s*/, '') // bullets, [ ], "1." "2)"
+    .replace(/\s+/g, ' ').trim()
+    .replace(/(\d\s*)[Il|]bs?\b/g, '$1lbs').replace(/\b[Il|]bs\b/g, 'lbs')   // OCR reads "lbs" as "Ibs"
+    .replace(/\b[O0]z\b/g, 'oz');
+  let qty = '';
+  let m;
+  if ((m = s.match(new RegExp('^(\\d+(?:[./]\\d+)?)\\s*(x\\b|' + UNIT + '\\b)?\\.?\\s+(.+)$', 'i')))) {
+    qty = m[2] && m[2].toLowerCase() !== 'x' ? `${m[1]} ${m[2]}` : m[1]; s = m[3];
+  } else if ((m = s.match(new RegExp('^(.+?)\\s*(?:[-–,]\\s*)?(?:x\\s*(\\d+)|\\((\\d+(?:\\s*' + UNIT + ')?)\\)|(\\d+(?:[./]\\d+)?\\s*' + UNIT + ')|(\\d+))$', 'i')))) {
+    const q = m[2] || m[3] || m[4] || m[5];
+    if (q && m[1].replace(/[^a-z]/gi, '').length >= 2) { qty = q; s = m[1]; }
+  } else if ((m = s.match(/^(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\s+(.+)$/i))) {
+    qty = String(NUMWORDS[m[1].toLowerCase()]); s = m[2];
+  }
+  const name = s.replace(/[^\p{L}\p{N}\s&'\-/.%]/gu, '').replace(/\s+/g, ' ').replace(/^[\s\-.]+|[\s\-.]+$/g, '').trim();
+  return { name: capitalize(name), quantity: qty.trim() };
+}
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function normKey(name) { return String(name || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
+function qtyNumber(q) {
+  if (!q) return 1;
+  const m = String(q).match(/^(\d+(?:\.\d+)?)(?:\/(\d+))?/);
+  if (!m) return 1;
+  const v = m[2] ? (+m[1] / +m[2]) : +m[1];
+  return v > 0 && v < 1000 ? v : 1;
+}
+function money(n) { return '$' + Number(n).toFixed(2); }
+
+/* ---------------- State & persistence ---------------- */
+let db = null, channel = null;
+let items = load(LS.items, []);
+let queue = load(LS.queue, []);
+let prices = load(LS.prices, {});
+let syncState = 'idle', lastError = '';
+let flushing = false;
+
+function load(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } }
+function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+function persist() { save(LS.items, items); save(LS.queue, queue); }
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+}
+
+/* ---------------- Supabase ---------------- */
+function connect(url, key) {
+  if (channel) { try { db.removeChannel(channel); } catch {} channel = null; }
+  db = window.supabase.createClient(url, key, { auth: { persistSession: false } });
+  show('main');
+  render();
+  channel = db.channel('grocery-' + Math.random().toString(36).slice(2))
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, () => scheduleRefresh())
+    .subscribe();
+  flush().then(refresh);
+  loadPrices();
+}
+
+let refreshTimer = null;
+function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 300); }
+
+async function refresh() {
+  if (!db || !navigator.onLine) { setSync(); return; }
+  if (queue.length) { await flush(); if (queue.length) return; }
+  const { data, error } = await db.from(TABLE).select('*').order('created_at', { ascending: true });
+  if (error) { handleDbError(error); return; }
+  if (queue.length) return; // a local change landed while we were fetching; next refresh will catch up
+  items = data || [];
+  lastError = ''; hideBanner();
+  persist(); render(); setSync();
+}
+
+async function loadPrices() {
+  if (!db || !navigator.onLine) return;
+  const { data, error } = await db.from(PRICE_TABLE).select('name,price');
+  if (error) return; // table optional until SQL is run
+  prices = {};
+  (data || []).forEach(r => { prices[r.name] = Number(r.price); });
+  save(LS.prices, prices);
+}
+
+function handleDbError(error) {
+  const msg = error.message || String(error);
+  lastError = msg;
+  const code = error.code || '';
+  if (code === '42P01' || code === 'PGRST205' || /relation .* does not exist|Could not find the table/i.test(msg)) {
+    showBanner('The <b>grocery_items</b> table doesn\'t exist yet. Open ⋯ → Settings and run the setup SQL in Supabase.');
+  } else if (code === '42703' || code === 'PGRST204' || /column .* does not exist|Could not find the .* column/i.test(msg)) {
+    showBanner('Your database needs a quick update for the new fields (quantity, aisle, price). Open ⋯ → Settings and re-run the setup SQL.');
+  } else if (/JWT|apikey|Invalid API key|401/i.test(msg)) {
+    showBanner('Supabase rejected the key. Check it in ⋯ → Settings.');
+  } else {
+    showBanner('Sync problem: ' + escapeHtml(msg) + ' — changes are saved on this phone and will retry.');
+  }
+  setSync();
+}
+
+/* Offline-first queue: every change is applied locally right away, then sent in order. */
+function enqueue(op) { queue.push(op); persist(); render(); flush(); }
+
+async function flush() {
+  if (flushing || !db || !navigator.onLine || !queue.length) { setSync(); return; }
+  flushing = true; setSync();
+  try {
+    while (queue.length) {
+      const op = queue[0];
+      const { error } = await runOp(op);
+      if (error && op.type === 'price') { queue.shift(); persist(); continue; } // price memory is best-effort
+      if (error) {
+        // Permanent errors (bad data / schema) would block the queue forever: drop that op after 5 tries.
+        op.tries = (op.tries || 0) + 1;
+        if (op.tries >= 5 && !/fetch|network|Failed/i.test(error.message || '')) { queue.shift(); toast('Dropped a change the server kept rejecting'); }
+        persist(); handleDbError(error); break;
+      }
+      queue.shift(); persist();
+    }
+  } catch (e) {
+    lastError = e.message;
+  } finally {
+    flushing = false; setSync(); render();
+  }
+}
+
+function runOp(op) {
+  const t = db.from(TABLE);
+  switch (op.type) {
+    case 'insert': return t.upsert(op.rows, { onConflict: 'id', ignoreDuplicates: true });
+    case 'update': return t.update(op.patch).eq('id', op.id);
+    case 'updateMany': return t.update(op.patch).in('id', op.ids);
+    case 'delete': return t.delete().in('id', op.ids);
+    case 'price': return db.from(PRICE_TABLE).upsert({ name: op.name, price: op.price, updated_at: new Date().toISOString() });
+    default: return Promise.resolve({ error: null });
+  }
+}
+
+function pendingIds() {
+  const s = new Set();
+  for (const op of queue) {
+    if (op.type === 'insert') op.rows.forEach(r => s.add(r.id));
+    else if (op.id) s.add(op.id);
+    else if (op.ids) op.ids.forEach(i => s.add(i));
+  }
+  return s;
+}
+
+/* ---------------- Actions ---------------- */
+function addItems(list) {
+  const now = Date.now();
+  const rows = list.filter(x => x.name).map((x, i) => {
+    const key = normKey(x.name);
+    const row = {
+      id: uuid(), name: x.name, quantity: x.quantity || null,
+      category: x.category || guessCategory(x.name),
+      price: x.price != null ? x.price : (prices[key] != null ? prices[key] : null),
+      checked: false, created_at: new Date(now + i).toISOString(),
+    };
+    return row;
+  });
+  if (!rows.length) return 0;
+  items.push(...rows);
+  enqueue({ type: 'insert', rows });
+  return rows.length;
+}
+
+function updateItem(id, patch) {
+  const it = items.find(i => i.id === id);
+  if (!it) return;
+  Object.assign(it, patch);
+  enqueue({ type: 'update', id, patch });
+}
+
+function deleteItems(ids) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  items = items.filter(i => !set.has(i.id));
+  enqueue({ type: 'delete', ids });
+}
+
+function rememberPrice(name, price) {
+  const key = normKey(name);
+  if (!key || price == null || isNaN(price)) return;
+  prices[key] = price; save(LS.prices, prices);
+  enqueue({ type: 'price', name: key, price });
+}
+
+/* ---------------- Rendering ---------------- */
+const $ = id => document.getElementById(id);
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function render() {
+  const listEl = $('list');
+  listEl.replaceChildren();
+  const pend = pendingIds();
+  if (!items.length) {
+    const e = el('div', 'empty');
+    e.append(el('div', 'big', '🛒'), el('p', null, 'Your list is empty.'), el('p', null, 'Tap “Scan list” to photograph a handwritten list, or type items above.'));
+    listEl.append(e);
+  }
+  const groups = new Map();
+  for (const it of items) {
+    const c = CAT_ORDER.includes(it.category) ? it.category : OTHER;
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(it);
+  }
+  const allDone = [];
+  for (const cat of CAT_ORDER) {
+    const g = groups.get(cat);
+    if (!g) continue;
+    const open = g.filter(i => !i.checked);
+    allDone.push(...g.filter(i => i.checked));
+    if (!open.length) continue;
+    listEl.append(renderGroup(cat, open, pend));
+  }
+  if (allDone.length) listEl.append(renderGroup(`In cart (${allDone.length})`, allDone, pend));
+
+  // totals
+  const left = items.filter(i => !i.checked).length;
+  let est = 0, priced = 0, cart = 0;
+  for (const i of items) {
+    if (i.price != null && i.price !== '') {
+      const v = Number(i.price) * qtyNumber(i.quantity);
+      est += v; priced++;
+      if (i.checked) cart += v;
+    }
+  }
+  const t = $('totals');
+  t.replaceChildren();
+  const b = el('b', null, items.length ? `${left} left` : 'No items');
+  t.append(b);
+  if (items.length) t.append(document.createTextNode(` of ${items.length}`));
+  if (priced) {
+    t.append(el('br'));
+    t.append(document.createTextNode(`Est. ${money(est)}` + (cart ? ` · in cart ${money(cart)}` : '') + (priced < items.length ? ` (${priced} priced)` : '')));
+  }
+}
+
+function renderGroup(title, list, pend) {
+  const g = el('section', 'group');
+  g.append(el('h2', null, title));
+  const card = el('div', 'card');
+  for (const it of list) {
+    const row = el('div', 'row' + (it.checked ? ' done' : ''));
+    const chk = el('button', 'check');
+    chk.setAttribute('aria-label', (it.checked ? 'Uncheck ' : 'Check ') + it.name);
+    const box = el('span', 'box', it.checked ? '✓' : '');
+    chk.append(box);
+    chk.onclick = () => { if (navigator.vibrate) navigator.vibrate(10); updateItem(it.id, { checked: !it.checked }); };
+    const main = el('button', 'row-main');
+    main.append(el('span', 'row-name', it.name));
+    if (it.quantity) main.append(el('span', 'qty', it.quantity));
+    if (it.price != null && it.price !== '') main.append(el('span', 'price', money(Number(it.price) * qtyNumber(it.quantity))));
+    if (pend.has(it.id)) { const p = el('span', 'pending'); p.title = 'Not synced yet'; main.append(p); }
+    main.onclick = () => openEdit(it.id);
+    row.append(chk, main);
+    card.append(row);
+  }
+  g.append(card);
+  return g;
+}
+
+function setSync() {
+  const dot = $('syncDot'), txt = $('syncText');
+  if (!dot) return;
+  dot.className = 'dot';
+  const n = queue.length;
+  if (!navigator.onLine) { dot.classList.add('off'); txt.textContent = n ? `Offline · ${n} change${n > 1 ? 's' : ''} waiting` : 'Offline · showing saved list'; }
+  else if (lastError && n) { dot.classList.add('err'); txt.textContent = `Not synced · ${n} waiting — will retry`; }
+  else if (lastError) { dot.classList.add('err'); txt.textContent = 'Sync error'; }
+  else if (flushing || n) { dot.classList.add('off'); txt.textContent = 'Syncing…'; }
+  else txt.textContent = 'Synced';
+}
+function showBanner(html) { const b = $('banner'); b.innerHTML = html; b.classList.remove('hidden'); }
+function hideBanner() { $('banner').classList.add('hidden'); }
+
+let toastTimer;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 2600); }
+
+function show(which) { $('setup').classList.toggle('hidden', which !== 'setup'); $('main').classList.toggle('hidden', which !== 'main'); }
+// Sheets push a history entry so the phone's Back button closes them instead of leaving the app.
+let pendingBack = null;
+function openSheet(id) {
+  $(id).classList.remove('hidden');
+  try {
+    // Switching straight from one sheet to another (menu → settings): reuse the history entry.
+    if (pendingBack) { clearTimeout(pendingBack); pendingBack = null; history.replaceState({ sheet: id }, ''); }
+    else history.pushState({ sheet: id }, '');
+  } catch {}
+}
+function closeSheet(id) {
+  const wasOpen = !$(id).classList.contains('hidden');
+  $(id).classList.add('hidden');
+  if (wasOpen && history.state && history.state.sheet === id) {
+    clearTimeout(pendingBack);
+    pendingBack = setTimeout(() => { pendingBack = null; history.back(); }, 0);
+  }
+}
+window.addEventListener('popstate', () => {
+  const keep = history.state && history.state.sheet;
+  document.querySelectorAll('.scrim').forEach(s => { if (s.id !== keep) s.classList.add('hidden'); });
+});
+
+/* ---------------- Edit sheet ---------------- */
+let editingId = null;
+function openEdit(id) {
+  const it = items.find(i => i.id === id);
+  if (!it) return;
+  editingId = id;
+  $('editName').value = it.name;
+  $('editQty').value = it.quantity || '';
+  $('editPrice').value = it.price != null ? Number(it.price).toFixed(2) : '';
+  const sel = $('editCat'); sel.replaceChildren();
+  CAT_ORDER.forEach(c => { const o = el('option', null, c); o.value = c; sel.append(o); });
+  sel.value = CAT_ORDER.includes(it.category) ? it.category : OTHER;
+  const known = prices[normKey(it.name)];
+  $('editPriceHint').textContent = known != null ? `Last price you entered for this: ${money(known)}. Prices are remembered for next time.` : 'Prices you enter are remembered for next time you add this item.';
+  openSheet('editSheet');
+}
+$('editSave').onclick = () => {
+  const name = $('editName').value.trim();
+  if (!name) return toast('Item needs a name');
+  const priceStr = $('editPrice').value.replace(/[$,\s]/g, '');
+  const price = priceStr === '' ? null : Number(priceStr);
+  if (price != null && (isNaN(price) || price < 0)) return toast('Price should be a number like 3.49');
+  const patch = { name, quantity: $('editQty').value.trim() || null, category: $('editCat').value, price: price != null ? Math.round(price * 100) / 100 : null };
+  updateItem(editingId, patch);
+  if (patch.price != null) rememberPrice(name, patch.price);
+  closeSheet('editSheet');
+};
+$('editDelete').onclick = () => { deleteItems([editingId]); closeSheet('editSheet'); toast('Item deleted'); };
+
+/* ---------------- Add bar ---------------- */
+$('addForm').onsubmit = e => {
+  e.preventDefault();
+  const v = $('addInput').value;
+  const parts = v.split(/[,;\n]/).map(parseItem).filter(p => p.name);
+  const n = addItems(parts);
+  if (n) { $('addInput').value = ''; if (n > 1) toast(`Added ${n} items`); }
+};
+
+/* ---------------- Menu ---------------- */
+$('menuBtn').onclick = () => openSheet('menuSheet');
+$('mGallery').onclick = () => { closeSheet('menuSheet'); $('galleryInput').click(); };
+$('mShare').onclick = async () => {
+  closeSheet('menuSheet');
+  const open = items.filter(i => !i.checked);
+  if (!open.length) return toast('Nothing left on the list');
+  let text = 'Grocery list\n';
+  for (const cat of CAT_ORDER) {
+    const g = open.filter(i => (CAT_ORDER.includes(i.category) ? i.category : OTHER) === cat);
+    if (!g.length) continue;
+    text += `\n${cat}\n` + g.map(i => `☐ ${i.name}${i.quantity ? ' (' + i.quantity + ')' : ''}`).join('\n') + '\n';
+  }
+  try {
+    if (navigator.share) await navigator.share({ title: 'Grocery list', text });
+    else { await navigator.clipboard.writeText(text); toast('List copied'); }
+  } catch (e) { if (e.name !== 'AbortError') { try { await navigator.clipboard.writeText(text); toast('List copied'); } catch { toast('Couldn\'t share'); } } }
+};
+$('mUncheck').onclick = () => {
+  closeSheet('menuSheet');
+  const ids = items.filter(i => i.checked).map(i => i.id);
+  if (!ids.length) return toast('Nothing is checked');
+  items.forEach(i => { if (i.checked) i.checked = false; });
+  enqueue({ type: 'updateMany', ids, patch: { checked: false } });
+};
+$('mClearChecked').onclick = () => {
+  closeSheet('menuSheet');
+  const ids = items.filter(i => i.checked).map(i => i.id);
+  if (!ids.length) return toast('Nothing is checked');
+  if (!confirm(`Remove ${ids.length} checked item${ids.length > 1 ? 's' : ''}?`)) return;
+  deleteItems(ids);
+};
+$('mClearAll').onclick = () => {
+  closeSheet('menuSheet');
+  if (!items.length) return toast('List is already empty');
+  if (!confirm(`Delete all ${items.length} items? This can't be undone.`)) return;
+  // Delete exactly the rows this phone knows about (no blanket table delete).
+  deleteItems(items.map(i => i.id));
+};
+$('mSettings').onclick = () => {
+  closeSheet('menuSheet');
+  $('setUrl').value = localStorage.getItem(LS.url) || '';
+  $('setKey').value = localStorage.getItem(LS.key) || '';
+  $('setMsg').textContent = lastError ? 'Last error: ' + lastError : '';
+  $('setVersion').textContent = `Version ${APP_VERSION} · ${items.length} items cached · ${queue.length} unsynced change(s)`;
+  openSheet('settingsSheet');
+};
+
+/* ---------------- Settings / setup ---------------- */
+async function testAndSave(url, key, msgEl) {
+  url = url.trim().replace(/\/+$/, ''); key = key.trim();
+  if (!/^https:\/\/.+/.test(url)) { msgEl.textContent = 'URL should look like https://xxxx.supabase.co'; return false; }
+  if (!key) { msgEl.textContent = 'Paste the anon / public key'; return false; }
+  msgEl.textContent = 'Checking connection…';
+  try {
+    const test = window.supabase.createClient(url, key, { auth: { persistSession: false } });
+    const { error } = await test.from(TABLE).select('id').limit(1);
+    if (error && !(error.code === '42P01' || error.code === 'PGRST205')) { msgEl.textContent = 'Couldn\'t connect: ' + error.message; return false; }
+    localStorage.setItem(LS.url, url); localStorage.setItem(LS.key, key);
+    if (error) toast('Connected — now run the setup SQL to create the table');
+    return true;
+  } catch (e) {
+    if (!navigator.onLine) { localStorage.setItem(LS.url, url); localStorage.setItem(LS.key, key); return true; }
+    msgEl.textContent = 'Couldn\'t reach that URL: ' + e.message; return false;
+  }
+}
+$('setupSave').onclick = async () => {
+  localStorage.removeItem('gl_disconnected');
+  if (await testAndSave($('setupUrl').value, $('setupKey').value, $('setupMsg'))) connect(localStorage.getItem(LS.url), localStorage.getItem(LS.key));
+};
+$('setSave').onclick = async () => {
+  if (await testAndSave($('setUrl').value, $('setKey').value, $('setMsg'))) {
+    localStorage.removeItem('gl_disconnected');
+    closeSheet('settingsSheet'); lastError = ''; hideBanner();
+    connect(localStorage.getItem(LS.url), localStorage.getItem(LS.key)); toast('Reconnected');
+  }
+};
+$('setResetCache').onclick = () => {
+  if (queue.length && !confirm(`${queue.length} change(s) haven't synced yet and will be lost. Continue?`)) return;
+  items = []; queue = []; persist(); closeSheet('settingsSheet'); render(); refresh(); loadPrices();
+};
+$('setDisconnect').onclick = () => {
+  if (!confirm('Forget the Supabase URL and key on this phone? Your list stays in Supabase.')) return;
+  localStorage.removeItem(LS.url); localStorage.removeItem(LS.key); localStorage.setItem('gl_disconnected', '1');
+  items = []; queue = []; persist();
+  if (channel) { try { db.removeChannel(channel); } catch {} }
+  db = null; closeSheet('settingsSheet'); show('setup');
+};
+document.querySelectorAll('[data-sql]').forEach(p => p.textContent = SETUP_SQL);
+document.querySelectorAll('[data-copy-sql]').forEach(b => b.onclick = async () => {
+  try { await navigator.clipboard.writeText(SETUP_SQL); toast('SQL copied — paste it in Supabase SQL Editor'); }
+  catch { toast('Copy failed — long-press the SQL to select it'); }
+});
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeSheet(b.closest('.scrim').id));
+document.querySelectorAll('.scrim').forEach(s => s.addEventListener('click', e => { if (e.target === s && s.id !== 'reviewSheet') closeSheet(s.id); }));
+
+/* ---------------- OCR ---------------- */
+let ocrWorker = null, ocrWorkerPromise = null;
+let currentFile = null, reviewRows = [];
+
+function getWorker() {
+  if (ocrWorker) return Promise.resolve(ocrWorker);
+  if (!ocrWorkerPromise) {
+    const base = new URL('vendor/', location.href).href;
+    ocrWorkerPromise = Tesseract.createWorker('eng', 1, {
+      // everything is bundled with the app, so scanning works with no internet
+      workerPath: base + 'worker.min.js',
+      corePath: base + 'core',
+      langPath: base + 'lang',
+      workerBlobURL: false,
+      logger: m => {
+        if (m.status === 'recognizing text') setReview(`Reading text… ${Math.round(m.progress * 100)}%`, 30 + m.progress * 70);
+        else if (/loading|initializ/i.test(m.status || '')) setReview('Loading text reader (first time takes a moment)…', 5 + (m.progress || 0) * 25);
+      },
+    }).then(async w => {
+      // PSM 4 = single column of text of variable sizes — suits a written list
+      await w.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1' });
+      ocrWorker = w; return w;
+    }).catch(e => { ocrWorkerPromise = null; throw e; });
+  }
+  return ocrWorkerPromise;
+}
+
+function setReview(text, pct) { $('reviewStatus').textContent = text; if (pct != null) $('reviewBar').style.width = Math.max(0, Math.min(100, pct)) + '%'; }
+
+/** Downscale/upscale, grayscale, and stretch contrast so pencil/pen on lined paper reads better. */
+async function preprocess(file, enhance) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { bmp = await new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = URL.createObjectURL(file); }); }
+  const w0 = bmp.width, h0 = bmp.height;
+  const longSide = Math.max(w0, h0);
+  const target = Math.min(2400, Math.max(1600, longSide)); // phones shoot ~4000px; OCR is faster & no worse at ~2000
+  const scale = target / longSide;
+  const w = Math.round(w0 * scale), h = Math.round(h0 * scale);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, w, h);
+  if (enhance) {
+    const img = ctx.getImageData(0, 0, w, h), d = img.data;
+    const hist = new Uint32Array(256);
+    const gray = new Uint8ClampedArray(w * h);
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      // weight blue less: blue ruled lines on notebook paper fade out
+      const g = Math.round(0.45 * d[i] + 0.45 * d[i + 1] + 0.10 * d[i + 2]);
+      gray[p] = g; hist[g]++;
+    }
+    // percentile contrast stretch (ignores glare & deep shadows)
+    const total = w * h; let acc = 0, lo = 0, hi = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * 0.01) { lo = v; break; } }
+    acc = 0;
+    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total * 0.30) { hi = v; break; } } // paper is the bright majority
+    const range = Math.max(1, hi - lo);
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      let v = (gray[p] - lo) * 255 / range;
+      v = 255 * Math.pow(Math.max(0, Math.min(1, v / 255)), 1.4); // push faint strokes darker relative to paper
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  if (bmp.close) bmp.close();
+  return c;
+}
+
+function isJunk(text, conf) {
+  const letters = (text.match(/\p{L}/gu) || []).length;
+  if (letters < 2) return true;
+  if (letters / text.replace(/\s/g, '').length < 0.5) return true; // mostly symbols / digits
+  if (/^(grocer(y|ies)|shopping|list|to ?do|todo|walmart|kroger|aldi|meijer|target|costco|store|week of|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[\s:.-]*(list)?[\s:.-]*$/i.test(text.trim())) return true;
+  return conf < 15;
+}
+
+async function runScan(file) {
+  currentFile = file;
+  $('reviewImg').src = URL.createObjectURL(file);
+  $('reviewBody').classList.add('hidden');
+  $('reviewAddTop').disabled = true;
+  setReview('Preparing image…', 2);
+  openSheet('reviewSheet');
+  try {
+    const canvas = await preprocess(file, $('reviewEnhance').checked);
+    const worker = await getWorker();
+    setReview('Reading text… 0%', 30);
+    const { data } = await worker.recognize(canvas);
+    const lines = (data.lines && data.lines.length ? data.lines.map(l => ({ text: l.text, conf: l.confidence }))
+      : (data.text || '').split('\n').map(t => ({ text: t, conf: 60 })));
+    const existing = new Set(items.filter(i => !i.checked).map(i => normKey(i.name)));
+    const seen = new Set();
+    reviewRows = [];
+    for (const l of lines) {
+      // a single written line sometimes holds "milk, eggs, bread"
+      for (const part of l.text.split(/[,;]/)) {
+        const raw = part.trim();
+        if (!raw) continue;
+        const p = parseItem(raw);
+        if (!p.name || isJunk(p.name, l.conf)) continue;
+        const key = normKey(p.name);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const dup = existing.has(key);
+        reviewRows.push({ ...p, include: !dup && l.conf >= 30, low: l.conf < 55, note: dup ? 'already on list' : '' });
+      }
+    }
+    renderReview();
+    setReview(reviewRows.length ? `Found ${reviewRows.length} line${reviewRows.length > 1 ? 's' : ''}.` : 'No items found. Try better lighting, fill the frame with the list, or turn off “Enhance” and rescan.', 100);
+    $('reviewBody').classList.remove('hidden');
+  } catch (e) {
+    console.error(e);
+    setReview('Scan failed: ' + (e.message || e), 0);
+    $('reviewBody').classList.remove('hidden');
+    reviewRows = []; renderReview();
+  }
+}
+
+function renderReview() {
+  const list = $('reviewList'); list.replaceChildren();
+  reviewRows.forEach((r, idx) => {
+    const row = el('div', 'rv' + (r.low ? ' low' : '') + (r.include ? '' : ' off'));
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = r.include;
+    cb.onchange = () => { r.include = cb.checked; row.classList.toggle('off', !cb.checked); updateReviewCount(); };
+    const n = el('input', 'n'); n.value = r.name; n.placeholder = 'Item'; n.oninput = () => { r.name = n.value; };
+    const q = el('input', 'q'); q.value = r.quantity; q.placeholder = 'qty'; q.oninput = () => { r.quantity = q.value; };
+    row.append(cb, n, q);
+    if (r.note) { const s = el('span', 'note', r.note); s.style.margin = '0'; row.append(s); }
+    list.append(row);
+  });
+  updateReviewCount();
+}
+function updateReviewCount() {
+  const n = reviewRows.filter(r => r.include && r.name.trim()).length;
+  $('reviewAdd').textContent = n ? `Add ${n} item${n > 1 ? 's' : ''}` : 'Add items';
+  $('reviewAdd').disabled = !n; $('reviewAddTop').disabled = !n;
+}
+function commitReview() {
+  const chosen = reviewRows.filter(r => r.include && r.name.trim()).map(r => ({ name: capitalize(r.name.trim()), quantity: r.quantity.trim() }));
+  const n = addItems(chosen);
+  closeSheet('reviewSheet');
+  if (n) toast(`Added ${n} item${n > 1 ? 's' : ''}`);
+}
+$('reviewAdd').onclick = commitReview;
+$('reviewAddTop').onclick = commitReview;
+$('reviewCancel').onclick = () => closeSheet('reviewSheet');
+$('reviewRescan').onclick = () => currentFile && runScan(currentFile);
+$('reviewAddLine').onclick = () => { reviewRows.push({ name: '', quantity: '', include: true, low: false, note: '' }); renderReview(); const ins = $('reviewList').querySelectorAll('.n'); ins[ins.length - 1].focus(); };
+
+$('scanBtn').onclick = () => $('cameraInput').click();
+for (const id of ['cameraInput', 'galleryInput']) {
+  $(id).onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) runScan(f); };
+}
+
+/* ---------------- Boot ---------------- */
+window.addEventListener('online', () => { lastError = ''; flush().then(refresh); loadPrices(); });
+window.addEventListener('offline', setSync);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && db) flush().then(refresh); });
+
+if (!IS_NATIVE && 'serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker failed', err));
+}
+
+(function boot() {
+  if (!window.supabase || !window.supabase.createClient) {
+    // CDN script didn't load (offline on very first launch)
+    show('setup'); $('setupMsg').textContent = 'Couldn\'t load the app libraries — connect to the internet once, then reopen.'; return;
+  }
+  let url = localStorage.getItem(LS.url), key = localStorage.getItem(LS.key);
+  // First launch: use the Supabase project built into this copy of the app (config.js)
+  if ((!url || !key) && BUILT_IN.supabaseUrl && BUILT_IN.supabaseKey && !localStorage.getItem('gl_disconnected')) {
+    url = BUILT_IN.supabaseUrl; key = BUILT_IN.supabaseKey;
+    localStorage.setItem(LS.url, url); localStorage.setItem(LS.key, key);
+  }
+  if (url && key) connect(url, key); else show('setup');
+})();
+</script>
+</body>
+</html>

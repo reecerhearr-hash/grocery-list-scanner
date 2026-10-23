@@ -1,0 +1,31 @@
+{
+  "name": "grocery-list-scanner",
+  "version": "2.1.0",
+  "description": "Scan handwritten grocery lists into a synced, checkable list",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "build": "npm run vendor && npx cap sync android",
+    "serve": "npm run vendor && npx http-server www -p 8080 -c-1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reecerhearr-hash/grocery-list-scanner.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/reecerhearr-hash/grocery-list-scanner/issues"
+  },
+  "homepage": "https://github.com/reecerhearr-hash/grocery-list-scanner#readme",
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "@supabase/supabase-js": "2.45.4",
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "5.1.1",
+    "tesseract.js-core": "5.1.1"
+  },
+  "private": true
+}
