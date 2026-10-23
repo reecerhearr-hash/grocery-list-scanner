@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Grocery List Scanner</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#007aff">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
@@ -78,6 +80,10 @@
     let supabase;
     let items = [];
 
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(err => console.log('SW failed', err));
+    }
+
     function saveConfig() {
       const url = document.getElementById('supabaseUrl').value.trim();
       const key = document.getElementById('supabaseKey').value.trim();
@@ -93,7 +99,6 @@
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('main').classList.remove('hidden');
       loadItems();
-      // Optional: subscribe to realtime
       supabase.channel('grocery')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'grocery_items' }, () => loadItems())
         .subscribe();
@@ -148,7 +153,6 @@
         document.getElementById('status').textContent = 'Extracted. Adding items...';
         const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 1 && !/^\d+$/.test(l));
         for (const line of lines) {
-          // Simple cleanup
           const name = line.replace(/[^a-zA-Z0-9\s\-\&]/g, '').trim();
           if (name) {
             await supabase.from('grocery_items').insert({ name });
@@ -161,7 +165,6 @@
       }
     }
 
-    // Auto-init if config exists
     window.onload = () => {
       const url = localStorage.getItem('supabaseUrl');
       const key = localStorage.getItem('supabaseKey');
