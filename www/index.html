@@ -144,13 +144,46 @@
     </details>
   </div>
 
+  <!-- ============ SIGN IN ============ -->
+  <div id="auth" class="wrap hidden" style="padding-top:24px">
+    <h1 style="font-size:28px;margin:0 0 6px">Grocery List</h1>
+    <p style="color:var(--muted);margin-top:0" id="authIntro">Sign in to see your household's list.</p>
+    <label class="lbl" for="authEmail">Email</label>
+    <input id="authEmail" class="field" type="email" autocomplete="email" inputmode="email">
+    <label class="lbl" for="authPass">Password</label>
+    <input id="authPass" class="field" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+    <button class="btn btn-block" id="authGo">Sign in</button>
+    <button class="btn-ghost btn-block" id="authSwitch" style="margin-top:6px">New here? Create an account</button>
+    <button class="btn-ghost btn-block" id="authForgot">Forgot password?</button>
+    <p id="authMsg" class="note"></p>
+  </div>
+
+  <!-- ============ HOUSEHOLD ============ -->
+  <div id="household" class="wrap hidden" style="padding-top:24px">
+    <h1 style="font-size:28px;margin:0 0 6px">Your household</h1>
+    <p style="color:var(--muted);margin-top:0">Everyone in a household shares one grocery list. Each person signs in with their own account.</p>
+    <div class="card" style="padding:14px">
+      <h4 style="margin:0 0 6px">Join someone's household</h4>
+      <p class="note" style="margin-top:0">Ask them for the invite code (in their app: ⋯ → Household).</p>
+      <input id="hhCode" class="field" placeholder="Invite code, e.g. 4F9A2C" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase">
+      <button class="btn btn-block" id="hhJoin">Join</button>
+    </div>
+    <div class="card" style="padding:14px;margin-top:14px">
+      <h4 style="margin:0 0 6px">Or start a new one</h4>
+      <input id="hhName" class="field" placeholder="Name, e.g. Home" value="Home">
+      <button class="btn btn-block scan-alt" id="hhCreate">Create household</button>
+    </div>
+    <p id="hhMsg" class="note"></p>
+    <button class="btn-ghost" id="hhSignOut">Sign out</button>
+  </div>
+
   <!-- ============ MAIN ============ -->
   <div id="main" class="hidden">
     <header>
       <div class="wrap">
         <div class="top">
           <div style="flex:1">
-            <h1>Grocery List</h1>
+            <h1 id="listTitle">Grocery List</h1>
             <div class="sync"><span class="dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
           </div>
           <button class="icon-btn" id="menuBtn" aria-label="Menu">⋯</button>
@@ -187,6 +220,7 @@
         <button id="mClearAll" class="danger">🗑️ Clear entire list</button>
       </div>
       <div class="card menu" style="margin-top:12px">
+        <button id="mHousehold">👥 Household &amp; sharing</button>
         <button id="mSettings">⚙️ Settings</button>
       </div>
     </div>
@@ -237,15 +271,37 @@
       <button class="btn btn-block" id="setSave">Save & reconnect</button>
       <p class="note" id="setMsg"></p>
       <h4 style="margin:18px 2px 6px">Database setup</h4>
-      <p class="note">Run in Supabase → SQL Editor. Safe to re-run; it adds new columns to an existing table and turns on realtime sync.</p>
+      <p class="note">Already applied to the built-in project. For your own project, run it in Supabase → SQL Editor; it's safe to re-run.</p>
       <button class="btn-ghost" data-copy-sql>Copy SQL</button>
       <pre class="sql" data-sql></pre>
       <h4 style="margin:18px 2px 6px">This device</h4>
       <div class="card menu">
         <button id="setResetCache">Clear offline cache &amp; reload from server</button>
-        <button id="setDisconnect" class="danger">Disconnect (forget Supabase keys)</button>
+        <button id="setDisconnect" class="danger">Disconnect (forget Supabase keys &amp; sign out)</button>
       </div>
       <p class="note" id="setVersion"></p>
+    </div>
+  </div>
+
+  <div id="householdSheet" class="scrim hidden">
+    <div class="sheet">
+      <div class="sheet-head"><button class="btn-ghost" data-close>Close</button><h3>Household</h3><span style="width:60px"></span></div>
+      <label class="lbl" for="hsName">Household name</label>
+      <div class="addbar" style="margin-top:0"><input id="hsName" class="field"><button class="btn" id="hsRename">Save</button></div>
+      <h4 style="margin:18px 2px 6px">Invite someone</h4>
+      <p class="note">They install the app, create their own account, then enter this code under <b>Join someone's household</b>.</p>
+      <div style="font-size:32px;font-weight:700;letter-spacing:.15em;text-align:center;padding:10px;background:var(--card);border-radius:12px" id="hsCode">——</div>
+      <div class="grid2" style="margin-top:10px">
+        <button class="btn" id="hsShare">Share code</button>
+        <button class="btn scan-alt" id="hsNewCode">New code</button>
+      </div>
+      <h4 style="margin:18px 2px 6px">Members</h4>
+      <div class="card menu" id="hsMembers"></div>
+      <p class="note" id="hsMe"></p>
+      <div class="card menu" style="margin-top:12px">
+        <button id="hsSignOut">Sign out</button>
+        <button id="hsLeave" class="danger">Leave household</button>
+      </div>
     </div>
   </div>
 
@@ -253,14 +309,17 @@
 
 <script>
 'use strict';
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '3.0.0';
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const BUILT_IN = window.GROCERY_CONFIG || {};
 const TABLE = 'grocery_items';
 const PRICE_TABLE = 'grocery_prices';
-const LS = { url: 'supabaseUrl', key: 'supabaseKey', items: 'gl_items_cache', queue: 'gl_queue', prices: 'gl_prices_cache' };
+const LS = { url: 'supabaseUrl', key: 'supabaseKey', items: 'gl_items_cache', queue: 'gl_queue', prices: 'gl_prices_cache', household: 'gl_household' };
 
 const SETUP_SQL = `-- Grocery List Scanner — database setup (safe to re-run)
+-- Separate logins, shared through a household: every list item and remembered price
+-- belongs to a household, and only that household's members can see or change it.
+
 create table if not exists public.grocery_items (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -271,20 +330,142 @@ alter table public.grocery_items add column if not exists quantity text;
 alter table public.grocery_items add column if not exists category text;
 alter table public.grocery_items add column if not exists price numeric(10,2);
 
+-- ---------- Households ----------
+create table if not exists public.households (
+  id uuid primary key default gen_random_uuid(),
+  name text not null default 'Home',
+  invite_code text not null unique default upper(substr(md5(gen_random_uuid()::text), 1, 6)),
+  created_by uuid references auth.users(id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create table if not exists public.household_members (
+  household_id uuid not null references public.households(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (household_id, user_id)
+);
+create unique index if not exists household_members_one_per_user on public.household_members(user_id);
+
+-- The signed-in user's household (each person belongs to one).
+create or replace function public.my_household_id() returns uuid
+language sql stable security definer set search_path = public as $$
+  select household_id from public.household_members where user_id = auth.uid() limit 1
+$$;
+
+-- ---------- Scope items and prices to a household ----------
+alter table public.grocery_items add column if not exists household_id uuid
+  references public.households(id) on delete cascade;
+alter table public.grocery_items alter column household_id set default public.my_household_id();
+create index if not exists grocery_items_household on public.grocery_items(household_id);
+
 create table if not exists public.grocery_prices (
-  name text primary key,          -- lower-cased item name
+  name text not null,             -- lower-cased item name
   price numeric(10,2) not null,
   updated_at timestamptz not null default now()
 );
+alter table public.grocery_prices add column if not exists household_id uuid
+  references public.households(id) on delete cascade;
+alter table public.grocery_prices alter column household_id set default public.my_household_id();
+delete from public.grocery_prices where household_id is null;   -- old single-user prices can't be assigned
+alter table public.grocery_prices alter column household_id set not null;
+alter table public.grocery_prices drop constraint if exists grocery_prices_pkey;
+alter table public.grocery_prices add primary key (household_id, name);
 
+-- ---------- Row-level security ----------
 alter table public.grocery_items enable row level security;
 alter table public.grocery_prices enable row level security;
-drop policy if exists "Allow all for anon" on public.grocery_items;
-create policy "Allow all for anon" on public.grocery_items for all using (true) with check (true);
-drop policy if exists "Allow all for anon" on public.grocery_prices;
-create policy "Allow all for anon" on public.grocery_prices for all using (true) with check (true);
+alter table public.households enable row level security;
+alter table public.household_members enable row level security;
 
--- Realtime: lets checkmarks sync live between phones
+drop policy if exists "Allow all for anon" on public.grocery_items;
+drop policy if exists "Allow all for anon" on public.grocery_prices;
+
+drop policy if exists "Household members" on public.grocery_items;
+create policy "Household members" on public.grocery_items for all to authenticated
+  using (household_id = (select public.my_household_id()))
+  with check (household_id = (select public.my_household_id()));
+
+drop policy if exists "Household members" on public.grocery_prices;
+create policy "Household members" on public.grocery_prices for all to authenticated
+  using (household_id = (select public.my_household_id()))
+  with check (household_id = (select public.my_household_id()));
+
+drop policy if exists "Members can see their household" on public.households;
+create policy "Members can see their household" on public.households for select to authenticated
+  using (id = (select public.my_household_id()));
+drop policy if exists "Members can rename their household" on public.households;
+create policy "Members can rename their household" on public.households for update to authenticated
+  using (id = (select public.my_household_id())) with check (id = (select public.my_household_id()));
+
+drop policy if exists "Members can see each other" on public.household_members;
+create policy "Members can see each other" on public.household_members for select to authenticated
+  using (household_id = (select public.my_household_id()));
+-- Creating, joining and leaving go through the functions below.
+
+-- ---------- Household actions ----------
+create or replace function public.create_household(p_name text default 'Home')
+returns public.households language plpgsql security definer set search_path = public as $$
+declare h public.households;
+begin
+  if auth.uid() is null then raise exception 'Sign in first'; end if;
+  if public.my_household_id() is not null then raise exception 'You are already in a household. Leave it first.'; end if;
+  insert into public.households(name, created_by) values (coalesce(nullif(trim(p_name), ''), 'Home'), auth.uid()) returning * into h;
+  insert into public.household_members(household_id, user_id) values (h.id, auth.uid());
+  return h;
+end $$;
+
+create or replace function public.join_household(p_code text)
+returns public.households language plpgsql security definer set search_path = public as $$
+declare h public.households;
+begin
+  if auth.uid() is null then raise exception 'Sign in first'; end if;
+  if public.my_household_id() is not null then raise exception 'You are already in a household. Leave it first.'; end if;
+  select * into h from public.households where invite_code = upper(trim(p_code));
+  if h.id is null then raise exception 'No household has that invite code'; end if;
+  insert into public.household_members(household_id, user_id) values (h.id, auth.uid());
+  return h;
+end $$;
+
+-- Leaving removes you; the last person to leave deletes the household and its list.
+create or replace function public.leave_household()
+returns void language plpgsql security definer set search_path = public as $$
+declare hid uuid := public.my_household_id();
+begin
+  if hid is null then return; end if;
+  delete from public.household_members where household_id = hid and user_id = auth.uid();
+  if not exists (select 1 from public.household_members where household_id = hid) then
+    delete from public.households where id = hid;
+  end if;
+end $$;
+
+create or replace function public.new_invite_code()
+returns text language plpgsql security definer set search_path = public as $$
+declare hid uuid := public.my_household_id(); c text;
+begin
+  if hid is null then raise exception 'Not in a household'; end if;
+  c := upper(substr(md5(gen_random_uuid()::text), 1, 6));
+  update public.households set invite_code = c where id = hid;
+  return c;
+end $$;
+
+-- Names on the Household screen: emails of the people in your own household only.
+create or replace function public.household_member_emails()
+returns table(user_id uuid, email text, joined_at timestamptz)
+language sql stable security definer set search_path = public, auth as $$
+  select m.user_id, u.email::text, m.joined_at
+  from public.household_members m join auth.users u on u.id = m.user_id
+  where m.household_id = public.my_household_id()
+  order by m.joined_at
+$$;
+
+revoke execute on function public.create_household(text), public.join_household(text),
+  public.leave_household(), public.new_invite_code(), public.my_household_id(),
+  public.household_member_emails() from public, anon;
+grant execute on function public.create_household(text), public.join_household(text),
+  public.leave_household(), public.new_invite_code(), public.my_household_id(),
+  public.household_member_emails() to authenticated;
+
+-- ---------- Realtime: lets checkmarks sync live between phones ----------
 do $$ begin
   if not exists (select 1 from pg_publication_tables
                  where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'grocery_items') then
@@ -360,7 +541,8 @@ function qtyNumber(q) {
 function money(n) { return '$' + Number(n).toFixed(2); }
 
 /* ---------------- State & persistence ---------------- */
-let db = null, channel = null;
+let db = null, channel = null, session = null;
+let household = load(LS.household, null); // { id, name, invite_code }
 let items = load(LS.items, []);
 let queue = load(LS.queue, []);
 let prices = load(LS.prices, {});
@@ -376,13 +558,54 @@ function uuid() {
 }
 
 /* ---------------- Supabase ---------------- */
-function connect(url, key) {
-  if (channel) { try { db.removeChannel(channel); } catch {} channel = null; }
-  db = window.supabase.createClient(url, key, { auth: { persistSession: false } });
+let authSub = null;
+async function connect(url, key) {
+  stopLive();
+  if (authSub) { try { authSub.unsubscribe(); } catch {} authSub = null; }
+  db = window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'gl_auth' } });
+  const { data } = db.auth.onAuthStateChange((event, s) => {
+    session = s;
+    if (event === 'SIGNED_OUT') { setHousehold(null); show('auth'); }
+  });
+  authSub = data.subscription;
+  try { session = (await db.auth.getSession()).data.session; } catch { session = null; }
+  if (!session) {
+    // No signal and the saved login needs refreshing: keep showing the saved list; it syncs once back online.
+    if (!navigator.onLine && household && localStorage.getItem('gl_auth')) { startMain(); return; }
+    show('auth'); return;
+  }
+  await afterSignIn();
+}
+
+/* Signed in: find this person's household, then open the list. */
+async function afterSignIn() {
+  if (navigator.onLine) {
+    const { data, error } = await db.from('household_members').select('household_id, households(id,name,invite_code)').eq('user_id', session.user.id).maybeSingle();
+    if (error) {
+      if (household) { startMain(); handleDbError(error); return; }
+      show('household'); $('hhMsg').textContent = 'Couldn\'t load your household: ' + error.message; return;
+    }
+    setHousehold(data ? data.households : null);
+  }
+  if (household) startMain(); else show('household');
+}
+
+function setHousehold(h) {
+  const changed = (household && household.id) !== (h && h.id);
+  household = h ? { id: h.id, name: h.name, invite_code: h.invite_code } : null;
+  save(LS.household, household);
+  if (changed) { items = []; queue = []; prices = {}; persist(); save(LS.prices, prices); }
+}
+
+function stopLive() { if (channel && db) { try { db.removeChannel(channel); } catch {} } channel = null; }
+function startMain() {
   show('main');
+  $('listTitle').textContent = household && household.name && household.name !== 'Home' ? household.name : 'Grocery List';
   render();
-  channel = db.channel('grocery-' + Math.random().toString(36).slice(2))
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, () => scheduleRefresh())
+  stopLive();
+  channel = db.channel('grocery-' + household.id)
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: 'household_id=eq.' + household.id }, () => scheduleRefresh())
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: TABLE }, () => scheduleRefresh())
     .subscribe();
   flush().then(refresh);
   loadPrices();
@@ -392,9 +615,9 @@ let refreshTimer = null;
 function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 300); }
 
 async function refresh() {
-  if (!db || !navigator.onLine) { setSync(); return; }
+  if (!db || !household || !navigator.onLine) { setSync(); return; }
   if (queue.length) { await flush(); if (queue.length) return; }
-  const { data, error } = await db.from(TABLE).select('*').order('created_at', { ascending: true });
+  const { data, error } = await db.from(TABLE).select('*').eq('household_id', household.id).order('created_at', { ascending: true });
   if (error) { handleDbError(error); return; }
   if (queue.length) return; // a local change landed while we were fetching; next refresh will catch up
   items = data || [];
@@ -403,8 +626,8 @@ async function refresh() {
 }
 
 async function loadPrices() {
-  if (!db || !navigator.onLine) return;
-  const { data, error } = await db.from(PRICE_TABLE).select('name,price');
+  if (!db || !household || !navigator.onLine) return;
+  const { data, error } = await db.from(PRICE_TABLE).select('name,price').eq('household_id', household.id);
   if (error) return; // table optional until SQL is run
   prices = {};
   (data || []).forEach(r => { prices[r.name] = Number(r.price); });
@@ -419,6 +642,11 @@ function handleDbError(error) {
     showBanner('The <b>grocery_items</b> table doesn\'t exist yet. Open ⋯ → Settings and run the setup SQL in Supabase.');
   } else if (code === '42703' || code === 'PGRST204' || /column .* does not exist|Could not find the .* column/i.test(msg)) {
     showBanner('Your database needs a quick update for the new fields (quantity, aisle, price). Open ⋯ → Settings and re-run the setup SQL.');
+  } else if (/JWT expired|refresh/i.test(msg)) {
+    showBanner('Your sign-in expired. Changes are saved on this phone; <a href="#" id="reSignIn">sign in again</a> to sync them.');
+    const a = document.getElementById('reSignIn'); if (a) a.onclick = e => { e.preventDefault(); show('auth'); };
+  } else if (/row-level security|permission denied|42501/i.test(msg)) {
+    showBanner('The server didn\'t accept that change for your household. Open ⋯ → Household to check you\'re still a member.');
   } else if (/JWT|apikey|Invalid API key|401/i.test(msg)) {
     showBanner('Supabase rejected the key. Check it in ⋯ → Settings.');
   } else {
@@ -431,7 +659,7 @@ function handleDbError(error) {
 function enqueue(op) { queue.push(op); persist(); render(); flush(); }
 
 async function flush() {
-  if (flushing || !db || !navigator.onLine || !queue.length) { setSync(); return; }
+  if (flushing || !db || !session || !household || !navigator.onLine || !queue.length) { setSync(); return; }
   flushing = true; setSync();
   try {
     while (queue.length) {
@@ -460,7 +688,7 @@ function runOp(op) {
     case 'update': return t.update(op.patch).eq('id', op.id);
     case 'updateMany': return t.update(op.patch).in('id', op.ids);
     case 'delete': return t.delete().in('id', op.ids);
-    case 'price': return db.from(PRICE_TABLE).upsert({ name: op.name, price: op.price, updated_at: new Date().toISOString() });
+    case 'price': return db.from(PRICE_TABLE).upsert({ household_id: op.household_id || household.id, name: op.name, price: op.price, updated_at: new Date().toISOString() }, { onConflict: 'household_id,name' });
     default: return Promise.resolve({ error: null });
   }
 }
@@ -481,7 +709,7 @@ function addItems(list) {
   const rows = list.filter(x => x.name).map((x, i) => {
     const key = normKey(x.name);
     const row = {
-      id: uuid(), name: x.name, quantity: x.quantity || null,
+      id: uuid(), household_id: household.id, name: x.name, quantity: x.quantity || null,
       category: x.category || guessCategory(x.name),
       price: x.price != null ? x.price : (prices[key] != null ? prices[key] : null),
       checked: false, created_at: new Date(now + i).toISOString(),
@@ -512,7 +740,7 @@ function rememberPrice(name, price) {
   const key = normKey(name);
   if (!key || price == null || isNaN(price)) return;
   prices[key] = price; save(LS.prices, prices);
-  enqueue({ type: 'price', name: key, price });
+  enqueue({ type: 'price', household_id: household.id, name: key, price });
 }
 
 /* ---------------- Rendering ---------------- */
@@ -608,7 +836,7 @@ function hideBanner() { $('banner').classList.add('hidden'); }
 let toastTimer;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 2600); }
 
-function show(which) { $('setup').classList.toggle('hidden', which !== 'setup'); $('main').classList.toggle('hidden', which !== 'main'); }
+function show(which) { for (const id of ['setup', 'auth', 'household', 'main']) $(id).classList.toggle('hidden', which !== id); }
 // Sheets push a history entry so the phone's Back button closes them instead of leaving the app.
 let pendingBack = null;
 function openSheet(id) {
@@ -712,6 +940,7 @@ $('mClearAll').onclick = () => {
 $('mSettings').onclick = () => {
   closeSheet('menuSheet');
   $('setUrl').value = localStorage.getItem(LS.url) || '';
+  $('setMsg').textContent = '';
   $('setKey').value = localStorage.getItem(LS.key) || '';
   $('setMsg').textContent = lastError ? 'Last error: ' + lastError : '';
   $('setVersion').textContent = `Version ${APP_VERSION} · ${items.length} items cached · ${queue.length} unsynced change(s)`;
@@ -725,11 +954,10 @@ async function testAndSave(url, key, msgEl) {
   if (!key) { msgEl.textContent = 'Paste the anon / public key'; return false; }
   msgEl.textContent = 'Checking connection…';
   try {
-    const test = window.supabase.createClient(url, key, { auth: { persistSession: false } });
-    const { error } = await test.from(TABLE).select('id').limit(1);
-    if (error && !(error.code === '42P01' || error.code === 'PGRST205')) { msgEl.textContent = 'Couldn\'t connect: ' + error.message; return false; }
+    const res = await fetch(url + '/auth/v1/settings', { headers: { apikey: key } });
+    if (!res.ok) { msgEl.textContent = 'Couldn\'t connect (' + res.status + '). Check the URL and key.'; return false; }
+    if (url !== localStorage.getItem(LS.url)) { setHousehold(null); items = []; queue = []; persist(); }
     localStorage.setItem(LS.url, url); localStorage.setItem(LS.key, key);
-    if (error) toast('Connected — now run the setup SQL to create the table');
     return true;
   } catch (e) {
     if (!navigator.onLine) { localStorage.setItem(LS.url, url); localStorage.setItem(LS.key, key); return true; }
@@ -751,12 +979,131 @@ $('setResetCache').onclick = () => {
   if (queue.length && !confirm(`${queue.length} change(s) haven't synced yet and will be lost. Continue?`)) return;
   items = []; queue = []; persist(); closeSheet('settingsSheet'); render(); refresh(); loadPrices();
 };
-$('setDisconnect').onclick = () => {
-  if (!confirm('Forget the Supabase URL and key on this phone? Your list stays in Supabase.')) return;
+$('setDisconnect').onclick = async () => {
+  if (!confirm('Forget the Supabase URL and key on this phone and sign out? Your list stays in Supabase.')) return;
+  stopLive();
+  try { await db.auth.signOut({ scope: 'local' }); } catch {}
   localStorage.removeItem(LS.url); localStorage.removeItem(LS.key); localStorage.setItem('gl_disconnected', '1');
-  items = []; queue = []; persist();
-  if (channel) { try { db.removeChannel(channel); } catch {} }
+  setHousehold(null); items = []; queue = []; persist();
   db = null; closeSheet('settingsSheet'); show('setup');
+};
+
+/* ---------------- Sign in ---------------- */
+let authMode = 'signin';
+function setAuthMode(m) {
+  authMode = m;
+  $('authGo').textContent = m === 'signup' ? 'Create account' : 'Sign in';
+  $('authSwitch').textContent = m === 'signup' ? 'Already have an account? Sign in' : 'New here? Create an account';
+  $('authPass').autocomplete = m === 'signup' ? 'new-password' : 'current-password';
+  $('authIntro').textContent = m === 'signup' ? 'Create your own account. You\'ll join or start a household next.' : 'Sign in to see your household\'s list.';
+  $('authMsg').textContent = '';
+}
+$('authSwitch').onclick = () => setAuthMode(authMode === 'signup' ? 'signin' : 'signup');
+$('authGo').onclick = async () => {
+  const email = $('authEmail').value.trim(), password = $('authPass').value;
+  const msg = $('authMsg');
+  if (!/^\S+@\S+\.\S+$/.test(email)) { msg.textContent = 'Enter your email address'; return; }
+  if (password.length < 6) { msg.textContent = 'Password needs at least 6 characters'; return; }
+  if (!navigator.onLine) { msg.textContent = 'You need internet to sign in'; return; }
+  $('authGo').disabled = true; msg.textContent = authMode === 'signup' ? 'Creating account…' : 'Signing in…';
+  try {
+    if (authMode === 'signup') {
+      const { data, error } = await db.auth.signUp({ email, password });
+      if (error) { msg.textContent = error.message; return; }
+      if (!data.session) {
+        setAuthMode('signin');
+        msg.textContent = 'Almost done: open the email Supabase just sent and tap the confirm link (if the page it opens shows an error, that\'s fine). Then come back and sign in here.';
+        return;
+      }
+      session = data.session;
+    } else {
+      const { data, error } = await db.auth.signInWithPassword({ email, password });
+      if (error) { msg.textContent = /confirm/i.test(error.message) ? 'Confirm your email first: tap the link in the email Supabase sent you, then sign in.' : error.message; return; }
+      session = data.session;
+    }
+    $('authPass').value = ''; msg.textContent = '';
+    await afterSignIn();
+  } catch (e) { msg.textContent = 'Couldn\'t reach the server: ' + e.message; }
+  finally { $('authGo').disabled = false; }
+};
+$('authForgot').onclick = async () => {
+  const email = $('authEmail').value.trim();
+  if (!email) { $('authMsg').textContent = 'Type your email above first, then tap Forgot password.'; return; }
+  const { error } = await db.auth.resetPasswordForEmail(email);
+  $('authMsg').textContent = error ? error.message : 'Check your email for a password reset link.';
+};
+
+/* ---------------- Household ---------------- */
+function rpcError(error) { return (error && (error.message || String(error))) || 'Something went wrong'; }
+$('hhJoin').onclick = async () => {
+  const code = $('hhCode').value.replace(/\s/g, '').toUpperCase();
+  if (code.length < 4) { $('hhMsg').textContent = 'Enter the invite code'; return; }
+  $('hhJoin').disabled = true; $('hhMsg').textContent = 'Joining…';
+  const { data, error } = await db.rpc('join_household', { p_code: code });
+  $('hhJoin').disabled = false;
+  if (error) { $('hhMsg').textContent = rpcError(error); return; }
+  $('hhMsg').textContent = ''; setHousehold(data); startMain(); toast('Joined ' + data.name);
+};
+$('hhCreate').onclick = async () => {
+  $('hhCreate').disabled = true; $('hhMsg').textContent = 'Creating…';
+  const { data, error } = await db.rpc('create_household', { p_name: $('hhName').value.trim() || 'Home' });
+  $('hhCreate').disabled = false;
+  if (error) { $('hhMsg').textContent = rpcError(error); return; }
+  $('hhMsg').textContent = ''; setHousehold(data); startMain(); openHousehold();
+};
+async function signOut() {
+  if (queue.length && !confirm(`${queue.length} change(s) haven't synced yet and will be lost. Sign out anyway?`)) return;
+  stopLive();
+  try { await db.auth.signOut({ scope: 'local' }); } catch {}
+  session = null; setHousehold(null); closeSheet('householdSheet'); setAuthMode('signin'); show('auth');
+}
+$('hhSignOut').onclick = signOut;
+$('hsSignOut').onclick = signOut;
+
+$('mHousehold').onclick = () => { closeSheet('menuSheet'); openHousehold(); };
+async function openHousehold() {
+  if (!household) return;
+  $('hsName').value = household.name || '';
+  $('hsCode').textContent = household.invite_code || '——';
+  $('hsMe').textContent = session ? 'You\'re signed in as ' + session.user.email : '';
+  const box = $('hsMembers'); box.replaceChildren(el('button', null, navigator.onLine ? 'Loading…' : 'Go online to see members'));
+  openSheet('householdSheet');
+  if (!navigator.onLine) return;
+  const [{ data: h }, { data: mem, error }] = await Promise.all([
+    db.from('households').select('id,name,invite_code').eq('id', household.id).maybeSingle(),
+    db.rpc('household_member_emails'),
+  ]);
+  if (h) { setHousehold(h); $('hsCode').textContent = h.invite_code; }
+  box.replaceChildren();
+  if (error || !mem) { box.append(el('button', null, 'Couldn\'t load members')); return; }
+  mem.forEach(m => box.append(el('button', null, (m.email || 'Member') + (session && m.user_id === session.user.id ? ' (you)' : ''))));
+}
+$('hsRename').onclick = async () => {
+  const name = $('hsName').value.trim();
+  if (!name) return toast('Give it a name');
+  const { error } = await db.from('households').update({ name }).eq('id', household.id);
+  if (error) return toast(rpcError(error));
+  household.name = name; save(LS.household, household);
+  $('listTitle').textContent = name === 'Home' ? 'Grocery List' : name; toast('Saved');
+};
+$('hsShare').onclick = async () => {
+  const text = `Join my grocery list! Install the Grocery List app, create an account, then tap "Join someone's household" and enter code ${household.invite_code}`;
+  try {
+    if (navigator.share) await navigator.share({ title: 'Grocery list invite', text });
+    else { await navigator.clipboard.writeText(household.invite_code); toast('Code copied'); }
+  } catch (e) { if (e.name !== 'AbortError') { try { await navigator.clipboard.writeText(household.invite_code); toast('Code copied'); } catch {} } }
+};
+$('hsNewCode').onclick = async () => {
+  if (!confirm('Make a new invite code? The old one stops working (people already in the household stay in).')) return;
+  const { data, error } = await db.rpc('new_invite_code');
+  if (error) return toast(rpcError(error));
+  household.invite_code = data; save(LS.household, household); $('hsCode').textContent = data;
+};
+$('hsLeave').onclick = async () => {
+  if (!confirm('Leave this household? You\'ll stop seeing its list. If you\'re the last member, the list is deleted.')) return;
+  const { error } = await db.rpc('leave_household');
+  if (error) return toast(rpcError(error));
+  stopLive(); setHousehold(null); closeSheet('householdSheet'); show('household');
 };
 document.querySelectorAll('[data-sql]').forEach(p => p.textContent = SETUP_SQL);
 document.querySelectorAll('[data-copy-sql]').forEach(b => b.onclick = async () => {
@@ -1024,9 +1371,13 @@ for (const id of ['cameraInput', 'galleryInput']) {
 }
 
 /* ---------------- Boot ---------------- */
-window.addEventListener('online', () => { lastError = ''; flush().then(refresh); loadPrices(); });
+window.addEventListener('online', async () => {
+  lastError = '';
+  if (db && !session) { try { session = (await db.auth.getSession()).data.session; } catch {} if (!session) { show('auth'); return; } }
+  flush().then(refresh); loadPrices();
+});
 window.addEventListener('offline', setSync);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && db) flush().then(refresh); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && db && household) flush().then(refresh); });
 
 if (!IS_NATIVE && 'serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker failed', err));
