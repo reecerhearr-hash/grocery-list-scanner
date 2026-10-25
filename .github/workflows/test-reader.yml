@@ -20,4 +20,4 @@ jobs:
           echo "HTTP $code"; cat out.json; echo
           if [ "$code" != "200" ]; then echo "::error::read-list returned $code: $(head -c 300 out.json)"; exit 1; fi
           n=$(jq '.items | length' out.json)
-          echo "::notice::Read $n items: $(jq -r '[.items[] | .name + (if .quantity != "" then " ["+.quantity+"]" else "" end) + (if .unsure then " (?)" else "" end)] | join(" | ")' out.json)"
+          echo "::notice::Read $n items: $(jq -r '[.items[] | .name + (if .quantity != "" then " ["+.quantity+"]" else "" end) + (if .unsure then " (?)" else "" end) + (if .price != null then " ~$" + (.price|tostring) else "" end)] | join(" | ")' out.json)"
