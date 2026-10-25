@@ -1,5 +1,6 @@
 // read-list: turns a photo of a handwritten grocery list into clean items using Claude vision.
-// Body: { image: "<base64 jpeg>", mediaType?: "image/jpeg" }  →  { items: [{ name, quantity, category, unsure }] }
+// Body: { image: "<base64 jpeg>", mediaType?: "image/jpeg" }  →  { items: [{ name, quantity, category, unsure, price }] }
+// "price" is an AI estimate of the typical Walmart (US) shelf price for ONE unit of the quantity, or null.
 // Needs the ANTHROPIC_API_KEY secret (Supabase → Edge Functions → Secrets).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -30,9 +31,20 @@ Rules:
 - Set "unsure" to true only when you genuinely can't tell what a word says; give your best guess as the name.
 - Pick the store aisle "category" from the allowed list.
 - Ignore page headings, dates, store names, doodles and notebook printing.
+- Estimate "price": the typical current everyday price at a US Walmart store, in US dollars, for the most common
+  size/brand a household would buy (Great Value store brand unless a brand is written). It is the price of ONE unit
+  of "quantity": if quantity is "" or "1", the whole item (e.g. Milk → a gallon of Great Value whole milk ≈ 3.48);
+  if quantity is "3", one of the three; if quantity counts pieces that come in one package (e.g. "24" Hawaiian rolls),
+  divide the package price by that count so quantity × price = what they'd pay. Use null only for things that have
+  no sensible price. This is a ballpark estimate; don't refuse or add caveats.
 If the photo has no list, return an empty items array.
 
 Respond ONLY by calling the save_list tool.`;
+
+function toPrice(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.replace(/[$,\s]/g, "")) : NaN;
+  return Number.isFinite(n) && n > 0 && n < 1000 ? Math.round(n * 100) / 100 : null;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -70,8 +82,9 @@ Deno.serve(async (req) => {
                   quantity: { type: "string" },
                   category: { type: "string", enum: CATEGORIES },
                   unsure: { type: "boolean" },
+                  price: { type: ["number", "null"], description: "Estimated Walmart price in USD for one unit of quantity" },
                 },
-                required: ["name", "quantity", "category", "unsure"],
+                required: ["name", "quantity", "category", "unsure", "price"],
               },
             },
           },
@@ -108,11 +121,12 @@ Deno.serve(async (req) => {
   }
   const clean = items
     .filter((i: { name?: unknown }) => typeof i?.name === "string" && i.name.trim())
-    .map((i: { name: string; quantity?: string; category?: string; unsure?: boolean }) => ({
+    .map((i: { name: string; quantity?: string; category?: string; unsure?: boolean; price?: unknown }) => ({
       name: i.name.trim().slice(0, 120),
       quantity: (i.quantity ?? "").toString().trim().slice(0, 40),
       category: CATEGORIES.includes(i.category ?? "") ? i.category : "Other",
       unsure: !!i.unsure,
+      price: toPrice(i.price),
     }));
   return json({ items: clean, model: MODEL });
 });

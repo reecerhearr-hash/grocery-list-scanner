@@ -116,6 +116,7 @@
     .rv input[type=checkbox] { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
     .rv .n { flex: 1; min-width: 0; border: 0; background: transparent; padding: 8px 4px; }
     .rv .q { width: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: transparent; text-align: center; }
+    .rv .p { font-size: 13px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
     .rv.low .n { color: var(--warn); }
     .rv.off .n { color: var(--muted); text-decoration: line-through; }
     .note { font-size: 13px; color: var(--muted); margin: 6px 2px; }
@@ -250,7 +251,7 @@
       <div id="reviewStatus" class="note">Reading your list…</div>
       <div class="progress"><div id="reviewBar"></div></div>
       <div id="reviewBody" class="hidden">
-        <p class="note">Uncheck anything that isn't an item and fix spelling before adding. <span style="color:var(--warn)">Orange</span> = low confidence.</p>
+        <p class="note">Uncheck anything that isn't an item and fix spelling before adding. <span style="color:var(--warn)">Orange</span> = low confidence. ~$ = AI estimate of the Walmart price.</p>
         <div class="card" id="reviewList"></div>
         <button class="btn-ghost" id="reviewAddLine">＋ Add a line</button>
         <label class="toggle"><input type="checkbox" id="reviewAI"> Use AI handwriting reader (needs internet)</label>
@@ -309,7 +310,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 const BUILT_IN = window.GROCERY_CONFIG || {};
 const TABLE = 'grocery_items';
@@ -329,6 +330,7 @@ create table if not exists public.grocery_items (
 alter table public.grocery_items add column if not exists quantity text;
 alter table public.grocery_items add column if not exists category text;
 alter table public.grocery_items add column if not exists price numeric(10,2);
+alter table public.grocery_items add column if not exists price_estimated boolean not null default false; -- AI Walmart estimate vs. a price you entered
 
 -- ---------- Households ----------
 create table if not exists public.households (
@@ -711,7 +713,9 @@ function addItems(list) {
     const row = {
       id: uuid(), household_id: household.id, name: x.name, quantity: x.quantity || null,
       category: x.category || guessCategory(x.name),
-      price: x.price != null ? x.price : (prices[key] != null ? prices[key] : null),
+      // A price you entered before wins; otherwise use the AI's Walmart estimate from the scan.
+      price: prices[key] != null ? prices[key] : (x.price != null ? x.price : null),
+      price_estimated: prices[key] == null && x.price != null,
       checked: false, created_at: new Date(now + i).toISOString(),
     };
     return row;
@@ -791,7 +795,7 @@ function render() {
   if (items.length) t.append(document.createTextNode(` of ${items.length}`));
   if (priced) {
     t.append(el('br'));
-    t.append(document.createTextNode(`Est. ${money(est)}` + (cart ? ` · in cart ${money(cart)}` : '') + (priced < items.length ? ` (${priced} priced)` : '')));
+    t.append(document.createTextNode(`Est. ${money(est)}` + (cart ? ` · in cart ${money(cart)}` : '') + (priced < items.length ? ` (${priced} priced)` : '') + (items.some(i => i.price_estimated) ? ' · ~ = Walmart estimate' : '')));
   }
 }
 
@@ -809,7 +813,11 @@ function renderGroup(title, list, pend) {
     const main = el('button', 'row-main');
     main.append(el('span', 'row-name', it.name));
     if (it.quantity) main.append(el('span', 'qty', it.quantity));
-    if (it.price != null && it.price !== '') main.append(el('span', 'price', money(Number(it.price) * qtyNumber(it.quantity))));
+    if (it.price != null && it.price !== '') {
+      const pr = el('span', 'price', (it.price_estimated ? '~' : '') + money(Number(it.price) * qtyNumber(it.quantity)));
+      if (it.price_estimated) pr.title = 'AI estimate of the Walmart price';
+      main.append(pr);
+    }
     if (pend.has(it.id)) { const p = el('span', 'pending'); p.title = 'Not synced yet'; main.append(p); }
     main.onclick = () => openEdit(it.id);
     row.append(chk, main);
@@ -873,7 +881,7 @@ function openEdit(id) {
   CAT_ORDER.forEach(c => { const o = el('option', null, c); o.value = c; sel.append(o); });
   sel.value = CAT_ORDER.includes(it.category) ? it.category : OTHER;
   const known = prices[normKey(it.name)];
-  $('editPriceHint').textContent = known != null ? `Last price you entered for this: ${money(known)}. Prices are remembered for next time.` : 'Prices you enter are remembered for next time you add this item.';
+  $('editPriceHint').textContent = it.price_estimated && it.price != null ? `${money(it.price)} is an AI estimate of the Walmart price. Type what you actually paid and it'll be remembered for next time.` : known != null ? `Last price you entered for this: ${money(known)}. Prices are remembered for next time.` : 'Prices you enter are remembered for next time you add this item.';
   openSheet('editSheet');
 }
 $('editSave').onclick = () => {
@@ -882,9 +890,13 @@ $('editSave').onclick = () => {
   const priceStr = $('editPrice').value.replace(/[$,\s]/g, '');
   const price = priceStr === '' ? null : Number(priceStr);
   if (price != null && (isNaN(price) || price < 0)) return toast('Price should be a number like 3.49');
-  const patch = { name, quantity: $('editQty').value.trim() || null, category: $('editCat').value, price: price != null ? Math.round(price * 100) / 100 : null };
+  const it = items.find(i => i.id === editingId);
+  const rounded = price != null ? Math.round(price * 100) / 100 : null;
+  // Leaving an AI estimate untouched keeps it an estimate; typing a price makes it yours and it's remembered.
+  const keptEstimate = !!(it && it.price_estimated && rounded != null && it.price != null && Number(it.price) === rounded);
+  const patch = { name, quantity: $('editQty').value.trim() || null, category: $('editCat').value, price: rounded, price_estimated: keptEstimate };
   updateItem(editingId, patch);
-  if (patch.price != null) rememberPrice(name, patch.price);
+  if (patch.price != null && !keptEstimate) rememberPrice(name, patch.price);
   closeSheet('editSheet');
 };
 $('editDelete').onclick = () => { deleteItems([editingId]); closeSheet('editSheet'); toast('Item deleted'); };
@@ -1286,7 +1298,7 @@ async function runScan(files) {
     if (!key || seen.has(key)) return; // same item twice / on two photos only shows once
     seen.add(key);
     const dup = existing.has(key);
-    reviewRows.push({ name: p.name, quantity: p.quantity || '', category: p.category || null, include: include && !dup, low, note: dup ? 'already on list' : '' });
+    reviewRows.push({ name: p.name, quantity: p.quantity || '', category: p.category || null, price: p.price != null ? p.price : null, include: include && !dup, low, note: dup ? 'already on list' : '' });
   };
   try {
     let worker = null;
@@ -1299,7 +1311,7 @@ async function runScan(files) {
         const tick = setInterval(() => scanProgress('Reading handwriting (AI)…', 0.5), 1500);
         try {
           const found = await readWithAI(file);
-          found.forEach(i => { const q = parseItem(i.name); pushRow({ name: capitalize(i.name.trim()), quantity: i.quantity || q.quantity, category: i.category }, true, !!i.unsure); });
+          found.forEach(i => { const q = parseItem(i.name); pushRow({ name: capitalize(i.name.trim()), quantity: i.quantity || q.quantity, category: i.category, price: typeof i.price === 'number' ? i.price : null }, true, !!i.unsure); });
           usedAI++; done = true;
         } catch (e) { console.warn('AI reader failed', e); aiNotice = aiErrorText(e); }
         finally { clearInterval(tick); }
@@ -1340,6 +1352,9 @@ function renderReview() {
     const n = el('input', 'n'); n.value = r.name; n.placeholder = 'Item'; n.oninput = () => { r.name = n.value; };
     const q = el('input', 'q'); q.value = r.quantity; q.placeholder = 'qty'; q.oninput = () => { r.quantity = q.value; };
     row.append(cb, n, q);
+    const known = prices[normKey(r.name)];
+    const shown = known != null ? known : r.price;
+    if (shown != null) { const ps = el('span', 'p', (known != null ? '' : '~') + money(shown * qtyNumber(r.quantity))); ps.title = known != null ? 'Your remembered price' : 'AI estimate of the Walmart price'; row.append(ps); }
     if (r.note) { const s = el('span', 'note', r.note); s.style.margin = '0'; row.append(s); }
     list.append(row);
   });
@@ -1351,7 +1366,7 @@ function updateReviewCount() {
   $('reviewAdd').disabled = !n; $('reviewAddTop').disabled = !n;
 }
 function commitReview() {
-  const chosen = reviewRows.filter(r => r.include && r.name.trim()).map(r => ({ name: capitalize(r.name.trim()), quantity: (r.quantity || '').trim(), category: r.category || undefined }));
+  const chosen = reviewRows.filter(r => r.include && r.name.trim()).map(r => ({ name: capitalize(r.name.trim()), quantity: (r.quantity || '').trim(), category: r.category || undefined, price: r.price != null ? r.price : null }));
   const n = addItems(chosen);
   closeSheet('reviewSheet');
   if (n) toast(`Added ${n} item${n > 1 ? 's' : ''}`);

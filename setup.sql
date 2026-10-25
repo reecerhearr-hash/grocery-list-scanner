@@ -11,6 +11,7 @@ create table if not exists public.grocery_items (
 alter table public.grocery_items add column if not exists quantity text;
 alter table public.grocery_items add column if not exists category text;
 alter table public.grocery_items add column if not exists price numeric(10,2);
+alter table public.grocery_items add column if not exists price_estimated boolean not null default false; -- AI Walmart estimate vs. a price you entered
 
 -- ---------- Households ----------
 create table if not exists public.households (
